@@ -7,17 +7,9 @@ import { HeaderBar } from '../components/HeaderBar';
 import { AlertBanner } from '../components/AlertBanner';
 import { TriAlarmPanel } from '../components/TriAlarmPanel';
 import { AlertHistoryPanel } from '../components/AlertHistoryPanel';
+import { MemberHomeView } from '../components/MemberHomeView';
 import { BottomNav, NavTab } from '../components/BottomNav';
-import { updateUserEmergencyStatus } from '../services/userService';
-import { EmergencyStatus } from '../@types';
 import { 
-  Users, 
-  CheckCircle, 
-  AlertTriangle, 
-  PhoneCall, 
-  Radio, 
-  LifeBuoy, 
-  ShieldAlert,
   UserCheck
 } from 'lucide-react';
 
@@ -27,43 +19,41 @@ export const LeaderDashboard: React.FC = () => {
   const { currentAlert } = useActiveAlert(groupId);
   const { members, stats } = useMembers(groupId);
 
-  const [activeTab, setActiveTab] = useState<NavTab>('alarm');
-  const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<NavTab>('home');
 
   if (!userProfile) return null;
-
-  const handleUpdateMemberStatus = async (memberId: string, status: EmergencyStatus) => {
-    setUpdatingMemberId(memberId);
-    try {
-      await updateUserEmergencyStatus(memberId, status);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setUpdatingMemberId(null);
-    }
-  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 pb-24">
       <HeaderBar />
 
       <main className="max-w-md md:max-w-4xl mx-auto px-4 pt-4 space-y-5">
-        {/* Active Alert Banner - First Page Only */}
-        {activeTab === 'alarm' && (
-          <AlertBanner alert={currentAlert} userRole={userProfile.role} />
-        )}
-
-        {/* Tri-Alarm Emergency Transmitter Panel (Leader core feature - First Page) */}
-        {activeTab === 'alarm' && (
-          <TriAlarmPanel
-            userRole={userProfile.role}
-            userId={userProfile.uid}
-            userName={userProfile.name}
-            groupId={groupId}
+        {/* Home Page Tab */}
+        {activeTab === 'home' && (
+          <MemberHomeView
+            userProfile={userProfile}
+            currentAlert={currentAlert}
+            onNavigate={(tab) => {
+              if (tab === 'alarm') setActiveTab('alarm');
+              if (tab === 'network') setActiveTab('members');
+            }}
           />
         )}
 
-        {/* Recent Alerts Log with Date Filter (Alerts Tab) */}
+        {/* Active Alert Banner & Tri-Alarm Emergency Transmitter Panel */}
+        {activeTab === 'alarm' && (
+          <>
+            <AlertBanner alert={currentAlert} userRole={userProfile.role} />
+            <TriAlarmPanel
+              userRole={userProfile.role}
+              userId={userProfile.uid}
+              userName={userProfile.name}
+              groupId={groupId}
+            />
+          </>
+        )}
+
+        {/* Recent Alerts Log with Date Filter (Alerts Log Tab) */}
         {activeTab === 'overview' && (
           <AlertHistoryPanel 
             userRole={userProfile.role}
@@ -73,7 +63,7 @@ export const LeaderDashboard: React.FC = () => {
 
         {/* Group Member Roster (My Members Tab) */}
         {activeTab === 'members' && (
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-3.5 sm:p-5 shadow-xl space-y-3 sm:space-y-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-3.5 sm:p-5 shadow-xl space-y-3 sm:space-y-4">
             <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
               <h3 className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
                 <UserCheck className="w-4 h-4 text-emerald-400 flex-shrink-0" />

@@ -114,6 +114,10 @@ export const updateUserProfile = async (uid: string, data: Partial<UserProfile>)
 
 export const deleteUserProfile = async (uid: string): Promise<void> => {
   const userRef = doc(db, 'users', uid);
+  const snap = await getDoc(userRef);
+  if (snap.exists() && snap.data().role === 'HOST') {
+    throw new Error('Host HQ administrator accounts cannot be deleted.');
+  }
   await deleteDoc(userRef);
 };
 

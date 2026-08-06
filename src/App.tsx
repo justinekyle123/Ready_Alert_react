@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage';
 import { HostDashboard } from './pages/HostDashboard';
 import { LeaderDashboard } from './pages/LeaderDashboard';
 import { MemberDashboard } from './pages/MemberDashboard';
+import { NotificationPermissionModal } from './components/NotificationPermissionModal';
 import { Activity } from 'lucide-react';
 
 const AppContent: React.FC = () => {
@@ -28,15 +29,18 @@ const AppContent: React.FC = () => {
     return <LoginPage />;
   }
 
-  switch (userProfile.role) {
-    case 'HOST':
-      return <HostDashboard />;
-    case 'YOUTH_LEADER':
-      return <LeaderDashboard />;
-    case 'MEMBER':
-    default:
-      return <MemberDashboard />;
-  }
+  return (
+    <>
+      <NotificationPermissionModal />
+      {userProfile.role === 'HOST' ? (
+        <HostDashboard />
+      ) : userProfile.role === 'YOUTH_LEADER' ? (
+        <LeaderDashboard />
+      ) : (
+        <MemberDashboard />
+      )}
+    </>
+  );
 };
 
 export default function App() {
