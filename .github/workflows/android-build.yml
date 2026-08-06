@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ main ] # Runs every time you push to the main branch
+    branches: [ main ]
 
 jobs:
   build:
@@ -15,11 +15,13 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: 18
+        node-version: 20 # Upgraded to 20 for better Tailwind/Vite compatibility
         cache: 'npm'
 
     - name: Install Dependencies
-      run: npm install
+      run: |
+        npm ci --include=optional
+        npm rebuild @tailwindcss/oxide
 
     - name: Build React Web App
       run: npm run build
