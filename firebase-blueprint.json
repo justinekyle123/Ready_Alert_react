@@ -1,0 +1,53 @@
+{
+  "entities": {
+    "users": {
+      "title": "User",
+      "description": "Registered system users with host, youth leader, or member roles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["HOST", "YOUTH_LEADER", "MEMBER"] },
+        "contactNumber": { "type": "string" },
+        "groupId": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "emergencyStatus": { "type": "string", "enum": ["SAFE", "NEED_ASSISTANCE", "IN_DANGER", "UNACCOUNTED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "name", "role"]
+    },
+    "groups": {
+      "title": "Volunteer Group",
+      "description": "Volunteer group organization",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "leaderId": { "type": "string" },
+        "leaderName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["organizationName"]
+    },
+    "alerts": {
+      "title": "Alert",
+      "description": "Earthquake emergency alarm notifications",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "alertLevel": { "type": "string", "enum": ["GREEN", "YELLOW", "RED"] },
+        "message": { "type": "string" },
+        "groupId": { "type": "string" },
+        "triggeredBy": { "type": "string" },
+        "triggeredByName": { "type": "string" },
+        "triggeredByRole": { "type": "string", "enum": ["YOUTH_LEADER", "HOST"] },
+        "isBackupAlert": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["alertLevel", "triggeredBy", "active"]
+    }
+  }
+}
