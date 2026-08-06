@@ -6,13 +6,13 @@ import {
   Users, 
   Radio, 
   Building2, 
-  HeartHandshake, 
   Bell, 
   UserCheck,
-  LayoutDashboard
+  LayoutDashboard,
+  Home
 } from 'lucide-react';
 
-export type NavTab = 'overview' | 'alarm' | 'members' | 'groups' | 'status' | 'network' | 'alerts';
+export type NavTab = 'home' | 'overview' | 'alarm' | 'members' | 'groups' | 'status' | 'network' | 'alerts';
 
 interface BottomNavProps {
   role: UserRole;
@@ -61,6 +61,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       case 'YOUTH_LEADER':
         return [
           {
+            id: 'home' as NavTab,
+            label: 'Home',
+            icon: <Home className="w-5 h-5" />
+          },
+          {
             id: 'alarm' as NavTab,
             label: 'Tri-Alarm',
             icon: <Radio className={`w-5 h-5 ${hasActiveAlert ? 'text-red-400 animate-pulse' : ''}`} />
@@ -81,6 +86,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       default:
         return [
           {
+            id: 'home' as NavTab,
+            label: 'Home',
+            icon: <Home className="w-5 h-5" />
+          },
+          {
             id: 'alarm' as NavTab,
             label: 'Alerts Log',
             icon: <Bell className={`w-5 h-5 ${hasActiveAlert ? 'text-red-400 animate-pulse' : ''}`} />
@@ -97,27 +107,32 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   const items = renderNavItems();
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-slate-900/95 backdrop-blur-md border-t border-slate-800 shadow-2xl">
-      <div className="max-w-md md:max-w-4xl mx-auto px-2 flex items-center justify-around">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 p-2 sm:p-3 pointer-events-none pb-[calc(env(safe-area-inset-bottom)+8px)]">
+      <div className="max-w-md md:max-w-lg mx-auto bg-slate-900/90 backdrop-blur-2xl border border-slate-800/90 rounded-2xl sm:rounded-3xl shadow-2xl shadow-black/80 pointer-events-auto flex items-center justify-around p-1.5 ring-1 ring-white/5">
         {items.map((item) => {
           const isActive = activeTab === item.id;
           return (
             <button
               key={item.id}
               onClick={() => onSelectTab(item.id)}
-              className={`flex-1 min-h-[56px] py-1.5 px-1 flex flex-col items-center justify-center transition-all duration-200 active:scale-95 ${
+              className={`flex-1 min-h-[48px] py-1.5 px-1 rounded-xl sm:rounded-2xl flex flex-col items-center justify-center transition-all duration-200 active:scale-95 relative ${
                 isActive
-                  ? 'text-red-400 font-extrabold border-t-2 border-red-500 bg-red-950/20'
-                  : 'text-slate-400 hover:text-slate-200 font-medium'
+                  ? 'bg-slate-800/90 text-red-400 font-extrabold shadow-inner border border-slate-700/60'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40 font-medium'
               }`}
             >
               <div className="relative">
                 {item.icon}
                 {item.id === 'alarm' && hasActiveAlert && (
-                  <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-ping" />
+                  <span className="absolute -top-1 -right-1 flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+                  </span>
                 )}
               </div>
-              <span className="text-[10px] tracking-tight mt-1">{item.label}</span>
+              <span className="text-[10px] tracking-tight mt-1 leading-none font-bold">
+                {item.label}
+              </span>
             </button>
           );
         })}
@@ -125,3 +140,4 @@ export const BottomNav: React.FC<BottomNavProps> = ({
     </nav>
   );
 };
+

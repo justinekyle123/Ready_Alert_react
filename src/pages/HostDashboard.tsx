@@ -183,7 +183,12 @@ export const HostDashboard: React.FC = () => {
     }
   };
 
-  const handleDeleteUser = async (uid: string, name: string) => {
+  const handleDeleteUser = async (uid: string, name: string, role?: string) => {
+    if (role === 'HOST') {
+      showErrorAlert('Action Restricted', 'Host HQ administrator accounts cannot be deleted.');
+      return;
+    }
+
     const confirmed = await confirmDeleteAlert(
       'Delete User Account?',
       `Are you sure you want to delete user "${name}"? This action cannot be undone.`
@@ -193,9 +198,9 @@ export const HostDashboard: React.FC = () => {
     try {
       await deleteUserProfile(uid);
       showSuccessToast('User Account Deleted');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showErrorAlert('Delete Failed', 'Could not delete user account.');
+      showErrorAlert('Delete Failed', err?.message || 'Could not delete user account.');
     }
   };
 
@@ -249,10 +254,10 @@ export const HostDashboard: React.FC = () => {
                 className="bg-slate-900 border border-slate-800 hover:border-blue-500/50 p-4 sm:p-5 rounded-2xl shadow-xl space-y-2 cursor-pointer transition active:scale-98"
               >
                 <div className="flex items-center justify-between">
-                  <div className="w-10 h-10 rounded-xl bg-blue-950 border border-blue-800 text-blue-400 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-blue-950 border border-blue-800 text-blue-400 flex items-center justify-center shadow-inner">
                     <Users className="w-5 h-5" />
                   </div>
-                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 bg-blue-950 text-blue-300 rounded border border-blue-800">
+                  <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 bg-blue-950 text-blue-300 rounded-full border border-blue-800">
                     Manage
                   </span>
                 </div>
@@ -269,10 +274,10 @@ export const HostDashboard: React.FC = () => {
                 className="bg-slate-900 border border-slate-800 hover:border-purple-500/50 p-4 sm:p-5 rounded-2xl shadow-xl space-y-2 cursor-pointer transition active:scale-98"
               >
                 <div className="flex items-center justify-between">
-                  <div className="w-10 h-10 rounded-xl bg-purple-950 border border-purple-800 text-purple-400 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full bg-purple-950 border border-purple-800 text-purple-400 flex items-center justify-center shadow-inner">
                     <Building2 className="w-5 h-5" />
                   </div>
-                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 bg-purple-950 text-purple-300 rounded border border-purple-800">
+                  <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 bg-purple-950 text-purple-300 rounded-full border border-purple-800">
                     Manage
                   </span>
                 </div>
@@ -507,14 +512,16 @@ export const HostDashboard: React.FC = () => {
                           <span>Swap</span>
                         </button>
 
-                        <button
-                          onClick={() => handleDeleteUser(u.uid, u.name)}
-                          className="px-2.5 py-1.5 bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-800 rounded-xl min-h-[36px] flex items-center gap-1.5 text-xs font-bold transition active:scale-95"
-                          title="Delete User"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                          <span>Delete</span>
-                        </button>
+                        {u.role !== 'HOST' && (
+                          <button
+                            onClick={() => handleDeleteUser(u.uid, u.name, u.role)}
+                            className="px-2.5 py-1.5 bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-800 rounded-xl min-h-[36px] flex items-center gap-1.5 text-xs font-bold transition active:scale-95"
+                            title="Delete User"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                            <span>Delete</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
