@@ -25,7 +25,11 @@ import {
   Check, 
   UserCheck,
   Edit2,
-  Trash2
+  Trash2,
+  Eye,
+  Crown,
+  Mail,
+  Phone
 } from 'lucide-react';
 
 export const HostDashboard: React.FC = () => {
@@ -41,6 +45,7 @@ export const HostDashboard: React.FC = () => {
   // Group Modal States
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
   const [editingGroup, setEditingGroup] = useState<Group | null>(null);
+  const [viewingGroupDetails, setViewingGroupDetails] = useState<Group | null>(null);
 
   // User Modal States
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
@@ -51,7 +56,38 @@ export const HostDashboard: React.FC = () => {
   const [newGroupId, setNewGroupId] = useState('');
   const [newOrgName, setNewOrgName] = useState('');
   const [newLeaderName, setNewLeaderName] = useState('');
+  const [selectedLeaderUid, setSelectedLeaderUid] = useState('');
+  const [selectedMemberUids, setSelectedMemberUids] = useState<string[]>([]);
+  const [memberPickerUid, setMemberPickerUid] = useState<string>('');
   const [groupSubmitting, setGroupSubmitting] = useState(false);
+
+  // Filter actual youth leaders and members registered in system
+  const youthLeaders = users.filter(u => u.role === 'YOUTH_LEADER');
+  const allMembers = users.filter(u => u.role === 'MEMBER');
+
+  // Available youth leaders for Create Group (exclude leaders already assigned to an existing active group)
+  const availableLeadersForCreate = youthLeaders.filter(u => {
+    const isAssignedByGroupId = Boolean(u.groupId && groups.some(g => g.groupId === u.groupId));
+    const isAssignedByName = groups.some(g => g.leaderName === u.name);
+    return !isAssignedByGroupId && !isAssignedByName;
+  });
+
+  // Available youth leaders for Edit Group (allow currently assigned leader for this group, exclude leaders assigned to other groups)
+  const getAvailableLeadersForEdit = (targetGroup: Group) => {
+    return youthLeaders.filter(u => {
+      const isCurrentlyAssignedToThisGroup =
+        (targetGroup.groupId && u.groupId === targetGroup.groupId) ||
+        (targetGroup.leaderName && u.name === targetGroup.leaderName) ||
+        u.uid === selectedLeaderUid;
+
+      if (isCurrentlyAssignedToThisGroup) return true;
+
+      const isAssignedToOtherByGroupId = Boolean(u.groupId && groups.some(g => g.groupId === u.groupId && g.groupId !== targetGroup.groupId));
+      const isAssignedToOtherByName = groups.some(g => g.leaderName === u.name && g.groupId !== targetGroup.groupId);
+
+      return !isAssignedToOtherByGroupId && !isAssignedToOtherByName;
+    });
+  };
 
   // User Form State
   const [uName, setUName] = useState('');
@@ -75,16 +111,33 @@ export const HostDashboard: React.FC = () => {
     setGroupSubmitting(true);
     try {
       const gId = newGroupId.trim() || `GRP-${Math.floor(100 + Math.random() * 900)}`;
+      
+      const chosenLeader = youthLeaders.find(u => u.uid === selectedLeaderUid);
+      const chosenLeaderName = chosenLeader?.name || newLeaderName.trim() || 'Unassigned Leader';
+
       await createVolunteerGroup({
         groupId: gId,
         organizationName: newOrgName.trim(),
-        leaderName: newLeaderName.trim() || 'Assigned Leader',
-        memberCount: 0
+        leaderName: chosenLeaderName,
+        memberCount: selectedMemberUids.length
       });
+
+      if (chosenLeader) {
+        await updateUserGroupAssignment(chosenLeader.uid, gId, newOrgName.trim());
+      }
+
+      // Assign all selected members to this group
+      for (const mUid of selectedMemberUids) {
+        await updateUserGroupAssignment(mUid, gId, newOrgName.trim());
+      }
+
       setShowCreateGroupModal(false);
       setNewGroupId('');
       setNewOrgName('');
+      setSelectedLeaderUid('');
       setNewLeaderName('');
+      setSelectedMemberUids([]);
+      setMemberPickerUid('');
       showSuccessToast('Volunteer Group Created');
     } catch (err) {
       console.error(err);
@@ -99,13 +152,38 @@ export const HostDashboard: React.FC = () => {
     if (!editingGroup || !newOrgName.trim()) return;
     setGroupSubmitting(true);
     try {
+      const chosenLeader = youthLeaders.find(u => u.uid === selectedLeaderUid);
+      const chosenLeaderName = chosenLeader?.name || newLeaderName.trim() || editingGroup.leaderName || 'Unassigned Leader';
+
       await updateVolunteerGroup(editingGroup.groupId, {
         organizationName: newOrgName.trim(),
-        leaderName: newLeaderName.trim() || editingGroup.leaderName || 'Assigned Leader'
+        leaderName: chosenLeaderName,
+        memberCount: selectedMemberUids.length
       });
+
+      if (chosenLeader) {
+        await updateUserGroupAssignment(chosenLeader.uid, editingGroup.groupId, newOrgName.trim());
+      }
+
+      // Sync member group assignments
+      const previousMemberUids = users.filter(u => u.role === 'MEMBER' && u.groupId === editingGroup.groupId).map(u => u.uid);
+
+      for (const mUid of selectedMemberUids) {
+        await updateUserGroupAssignment(mUid, editingGroup.groupId, newOrgName.trim());
+      }
+
+      // Unassign members who were removed in the edit modal
+      const removedMemberUids = previousMemberUids.filter(uid => !selectedMemberUids.includes(uid));
+      for (const mUid of removedMemberUids) {
+        await updateUserGroupAssignment(mUid, '', '');
+      }
+
       setEditingGroup(null);
       setNewOrgName('');
+      setSelectedLeaderUid('');
       setNewLeaderName('');
+      setSelectedMemberUids([]);
+      setMemberPickerUid('');
       showSuccessToast('Volunteer Group Updated');
     } catch (err) {
       console.error(err);
@@ -321,7 +399,10 @@ export const HostDashboard: React.FC = () => {
                 onClick={() => {
                   setNewGroupId('');
                   setNewOrgName('');
+                  setSelectedLeaderUid('');
                   setNewLeaderName('');
+                  setSelectedMemberUids([]);
+                  setMemberPickerUid('');
                   setShowCreateGroupModal(true);
                 }}
                 className="min-h-[38px] px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition active:scale-95 shadow"
@@ -342,36 +423,51 @@ export const HostDashboard: React.FC = () => {
                   const leader = groupUsers.find(u => u.role === 'YOUTH_LEADER');
 
                   return (
-                    <div key={g.groupId} className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-2.5 relative">
+                    <div key={g.groupId} className="p-4 bg-slate-950 border border-slate-800 hover:border-slate-700/80 rounded-2xl space-y-3 relative transition shadow-sm">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <div className="font-bold text-sm text-slate-100">{g.organizationName}</div>
-                          <div className="text-[11px] text-purple-400 font-mono">ID: {g.groupId}</div>
+                          <div className="font-extrabold text-sm text-slate-100">{g.organizationName}</div>
+                          <div className="text-[11px] text-purple-400 font-mono mt-0.5">ID: {g.groupId}</div>
                         </div>
-                        <span className="text-[10px] bg-slate-900 border border-slate-700 px-2 py-0.5 rounded text-slate-300 font-semibold flex-shrink-0">
+                        <span className="text-[10px] bg-slate-900 border border-slate-700/80 px-2.5 py-1 rounded-xl text-slate-300 font-bold flex-shrink-0">
                           {groupUsers.length} members
                         </span>
                       </div>
 
-                      <div className="text-xs text-slate-400 border-t border-slate-800/80 pt-2 flex items-center justify-between">
-                        <div className="flex items-center gap-1 text-[11px]">
-                          <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-                          <span>Leader: <strong className="text-slate-200">{leader?.name || g.leaderName || 'Unassigned'}</strong></span>
+                      <div className="text-xs text-slate-400 border-t border-slate-800/80 pt-2.5 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 text-[11px] min-w-0">
+                          <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span className="truncate">Leader: <strong className="text-slate-200">{leader?.name || g.leaderName || 'Unassigned'}</strong></span>
                         </div>
 
-                        {/* Group Actions: Edit & Delete */}
-                        <div className="flex items-center space-x-1">
+                        {/* Group Actions: View Details, Edit & Delete */}
+                        <div className="flex items-center space-x-1 shrink-0">
+                          <button
+                            onClick={() => setViewingGroupDetails(g)}
+                            className="px-2 py-1 bg-purple-950/90 hover:bg-purple-900 text-purple-200 border border-purple-800/80 rounded-lg text-xs font-bold flex items-center gap-1 transition"
+                            title="View Group Details & Roster"
+                          >
+                            <Eye className="w-3.5 h-3.5 text-purple-300" />
+                            <span>Details</span>
+                          </button>
+
                           <button
                             onClick={() => {
                               setEditingGroup(g);
                               setNewOrgName(g.organizationName);
-                              setNewLeaderName(g.leaderName || '');
+                              const matchedLeader = users.find(u => u.role === 'YOUTH_LEADER' && (u.groupId === g.groupId || u.name === g.leaderName));
+                              setSelectedLeaderUid(matchedLeader?.uid || '');
+                              setNewLeaderName(g.leaderName || matchedLeader?.name || '');
+                              const currentMembers = users.filter(u => u.role === 'MEMBER' && u.groupId === g.groupId).map(u => u.uid);
+                              setSelectedMemberUids(currentMembers);
+                              setMemberPickerUid('');
                             }}
-                            className="p-1.5 bg-slate-900 hover:bg-slate-800 text-purple-300 rounded-lg border border-slate-700 transition"
+                            className="p-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-700 transition"
                             title="Edit Group"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
+
                           <button
                             onClick={() => handleDeleteGroup(g.groupId, g.organizationName)}
                             className="p-1.5 bg-slate-900 hover:bg-red-950 text-red-400 rounded-lg border border-slate-700 transition"
@@ -532,10 +628,175 @@ export const HostDashboard: React.FC = () => {
         )}
       </main>
 
+      {/* MODAL 0: VIEW GROUP DETAILS */}
+      {viewingGroupDetails && (() => {
+        const groupMembers = users.filter(u => u.groupId === viewingGroupDetails.groupId && u.role === 'MEMBER');
+        const assignedLeader = users.find(u => u.role === 'YOUTH_LEADER' && (u.groupId === viewingGroupDetails.groupId || u.name === viewingGroupDetails.leaderName));
+
+        return (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto space-y-5 shadow-2xl animate-in fade-in zoom-in-95">
+              {/* Modal Header */}
+              <div className="flex items-start justify-between border-b border-slate-800 pb-3.5">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-purple-400" />
+                    <h3 className="text-base font-black text-white">{viewingGroupDetails.organizationName}</h3>
+                  </div>
+                  <div className="text-xs text-purple-400 font-mono mt-0.5">Group ID: {viewingGroupDetails.groupId}</div>
+                </div>
+                <button
+                  onClick={() => setViewingGroupDetails(null)}
+                  className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Assigned Youth Leader Section */}
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-blue-400">
+                    <Crown className="w-4 h-4 text-amber-400" />
+                    <span>Assigned Youth Leader</span>
+                  </span>
+                  <span className="px-2 py-0.5 text-[9px] font-black rounded bg-blue-950 text-blue-300 border border-blue-800 uppercase">
+                    Actual Role: YOUTH_LEADER
+                  </span>
+                </div>
+
+                {assignedLeader ? (
+                  <div className="p-3.5 bg-gradient-to-r from-blue-950/40 via-slate-950 to-slate-950 border border-blue-800/60 rounded-2xl flex items-center justify-between gap-3 shadow-inner">
+                    <div className="flex items-center space-x-3 min-w-0">
+                      <div className="w-10 h-10 rounded-full bg-blue-900 text-blue-100 font-black text-xs flex items-center justify-center border border-blue-600 shrink-0">
+                        {assignedLeader.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-100 truncate">{assignedLeader.name}</div>
+                        <div className="text-[10px] text-slate-300 flex items-center gap-1 truncate">
+                          <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                          <span>{assignedLeader.email}</span>
+                        </div>
+                        {assignedLeader.contactNumber && (
+                          <div className="text-[10px] text-slate-400 flex items-center gap-1 font-mono mt-0.5">
+                            <Phone className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <span>{assignedLeader.contactNumber}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-slate-950 border border-slate-800 rounded-2xl flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-200">
+                        {viewingGroupDetails.leaderName || 'No Leader Assigned'}
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        No active Youth Leader account linked to this group yet.
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const g = viewingGroupDetails;
+                        setViewingGroupDetails(null);
+                        setEditingGroup(g);
+                        setNewOrgName(g.organizationName);
+                        setSelectedLeaderUid('');
+                        setNewLeaderName(g.leaderName || '');
+                        const currentMembers = users.filter(u => u.role === 'MEMBER' && u.groupId === g.groupId).map(u => u.uid);
+                        setSelectedMemberUids(currentMembers);
+                        setMemberPickerUid('');
+                      }}
+                      className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold shrink-0 transition"
+                    >
+                      Assign Leader
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Member Roster List */}
+              <div className="space-y-2">
+                <div className="text-xs font-black uppercase tracking-wider text-slate-300 flex items-center justify-between">
+                  <span>Group Member Roster</span>
+                  <span className="text-[10px] text-slate-500 font-normal">{groupMembers.length} registered</span>
+                </div>
+
+                <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                  {groupMembers.length === 0 ? (
+                    <div className="text-center py-6 text-xs text-slate-500 italic bg-slate-950 rounded-2xl border border-slate-800">
+                      No volunteer members assigned to this group yet.
+                    </div>
+                  ) : (
+                    groupMembers.map((m) => {
+                      let statusBadge = 'bg-slate-900 text-slate-400 border-slate-800';
+                      if (m.emergencyStatus === 'SAFE') statusBadge = 'bg-emerald-950 text-emerald-300 border-emerald-800';
+                      if (m.emergencyStatus === 'NEEDS_ASSISTANCE') statusBadge = 'bg-amber-950 text-amber-300 border-amber-800';
+                      if (m.emergencyStatus === 'DANGER') statusBadge = 'bg-red-950 text-red-300 border-red-800';
+
+                      return (
+                        <div
+                          key={m.uid}
+                          className="p-3 bg-slate-950 border border-slate-800/80 rounded-xl flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center space-x-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-slate-800 text-slate-200 font-bold text-xs flex items-center justify-center border border-slate-700 shrink-0">
+                              {m.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs font-bold text-slate-100 truncate">{m.name}</div>
+                              <div className="text-[10px] text-slate-400 truncate">{m.email} {m.contactNumber ? `• ${m.contactNumber}` : ''}</div>
+                            </div>
+                          </div>
+
+                          <span className={`px-2 py-0.5 text-[9px] font-black rounded-lg border shrink-0 ${statusBadge}`}>
+                            {m.emergencyStatus || 'UNACCOUNTED'}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Modal Action Buttons */}
+              <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+                <button
+                  onClick={() => {
+                    const g = viewingGroupDetails;
+                    setViewingGroupDetails(null);
+                    setEditingGroup(g);
+                    setNewOrgName(g.organizationName);
+                    const leaderUser = users.find(u => u.role === 'YOUTH_LEADER' && (u.groupId === g.groupId || u.name === g.leaderName));
+                    setSelectedLeaderUid(leaderUser?.uid || '');
+                    setNewLeaderName(g.leaderName || leaderUser?.name || '');
+                    const currentMembers = users.filter(u => u.role === 'MEMBER' && u.groupId === g.groupId).map(u => u.uid);
+                    setSelectedMemberUids(currentMembers);
+                    setMemberPickerUid('');
+                  }}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-purple-300 border border-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Edit Group</span>
+                </button>
+
+                <button
+                  onClick={() => setViewingGroupDetails(null)}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs rounded-xl transition"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* MODAL 1: CREATE GROUP */}
       {showCreateGroupModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
                 <Building2 className="w-5 h-5 text-purple-400" />
@@ -574,14 +835,118 @@ export const HostDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Youth Leader Name</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Leader Maria Santos"
-                  value={newLeaderName}
-                  onChange={(e) => setNewLeaderName(e.target.value)}
+                <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>Assign Youth Leader</span>
+                  <span className="text-[10px] text-blue-400 font-mono font-bold">Role: YOUTH_LEADER</span>
+                </label>
+                <select
+                  value={selectedLeaderUid}
+                  onChange={(e) => {
+                    const uid = e.target.value;
+                    setSelectedLeaderUid(uid);
+                    const chosen = youthLeaders.find(u => u.uid === uid);
+                    setNewLeaderName(chosen ? chosen.name : '');
+                  }}
                   className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
+                >
+                  <option value="">-- No Youth Leader Selected (Unassigned) --</option>
+                  {availableLeadersForCreate.map((leader) => (
+                    <option key={leader.uid} value={leader.uid}>
+                      {leader.name} ({leader.email}) — Youth Volunteer Leader
+                    </option>
+                  ))}
+                </select>
+
+                {selectedLeaderUid && (() => {
+                  const chosen = youthLeaders.find(u => u.uid === selectedLeaderUid);
+                  if (!chosen) return null;
+                  return (
+                    <div className="mt-2 p-2.5 bg-blue-950/60 border border-blue-800/80 rounded-xl text-xs space-y-0.5">
+                      <div className="flex items-center justify-between font-bold text-blue-200">
+                        <span>Assigned: {chosen.name}</span>
+                        <span className="px-2 py-0.5 bg-blue-900 text-blue-200 rounded text-[9px] font-black uppercase tracking-wider">
+                          {chosen.role}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-300 truncate">{chosen.email} {chosen.contactNumber ? `• ${chosen.contactNumber}` : ''}</div>
+                    </div>
+                  );
+                })()}
+
+                {availableLeadersForCreate.length === 0 && !selectedLeaderUid && (
+                  <div className="mt-1.5 p-2 bg-amber-950/40 border border-amber-800/60 rounded-xl text-[11px] text-amber-300 space-y-1">
+                    <p>⚠️ All registered Youth Leaders are already assigned to active groups, or none exist.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Assign Members Section */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>Assign Group Members ({selectedMemberUids.length})</span>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">Role: MEMBER</span>
+                </label>
+                <select
+                  value={memberPickerUid}
+                  onChange={(e) => {
+                    const uid = e.target.value;
+                    if (uid && !selectedMemberUids.includes(uid)) {
+                      setSelectedMemberUids(prev => [...prev, uid]);
+                    }
+                    setMemberPickerUid('');
+                  }}
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">+ Select a member to add to this group...</option>
+                  {allMembers.map((m) => {
+                    const isAlreadySelected = selectedMemberUids.includes(m.uid);
+                    const currentGroupInfo = m.groupId ? `Currently in ${m.groupId}` : 'Unassigned';
+                    return (
+                      <option key={m.uid} value={m.uid} disabled={isAlreadySelected}>
+                        {m.name} ({m.email}) — {isAlreadySelected ? '✓ Selected' : currentGroupInfo}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                {/* Selected Members Roster */}
+                <div className="mt-2 space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                  {selectedMemberUids.length === 0 ? (
+                    <div className="p-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-[11px] text-slate-500 italic text-center">
+                      No members assigned yet. Use the dropdown above to add members.
+                    </div>
+                  ) : (
+                    selectedMemberUids.map((mUid) => {
+                      const m = allMembers.find(u => u.uid === mUid);
+                      if (!m) return null;
+                      return (
+                        <div
+                          key={mUid}
+                          className="p-2 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="flex items-center space-x-2 min-w-0">
+                            <div className="w-6 h-6 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300 font-bold text-[10px] flex items-center justify-center shrink-0">
+                              {m.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-100 truncate">{m.name}</div>
+                              <div className="text-[10px] text-slate-400 truncate">{m.email}</div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMemberUids(prev => prev.filter(id => id !== mUid))}
+                            className="p-1 text-slate-400 hover:text-red-400 hover:bg-slate-900 rounded-lg transition shrink-0"
+                            title="Remove from group"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               <div className="pt-2 flex justify-end space-x-2">
@@ -608,7 +973,7 @@ export const HostDashboard: React.FC = () => {
       {/* MODAL 2: EDIT GROUP */}
       {editingGroup && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 max-w-md w-full space-y-4 shadow-2xl animate-in fade-in zoom-in-95 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-sm font-black uppercase tracking-wider text-white flex items-center gap-2">
                 <Edit2 className="w-5 h-5 text-purple-400" />
@@ -635,13 +1000,118 @@ export const HostDashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Assigned Youth Leader Name</label>
-                <input
-                  type="text"
-                  value={newLeaderName}
-                  onChange={(e) => setNewLeaderName(e.target.value)}
+                <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>Assigned Youth Leader</span>
+                  <span className="text-[10px] text-blue-400 font-mono font-bold">Role: YOUTH_LEADER</span>
+                </label>
+                <select
+                  value={selectedLeaderUid}
+                  onChange={(e) => {
+                    const uid = e.target.value;
+                    setSelectedLeaderUid(uid);
+                    const chosen = youthLeaders.find(u => u.uid === uid);
+                    setNewLeaderName(chosen ? chosen.name : '');
+                  }}
                   className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
+                >
+                  <option value="">-- No Youth Leader Selected (Unassigned) --</option>
+                  {getAvailableLeadersForEdit(editingGroup).map((leader) => (
+                    <option key={leader.uid} value={leader.uid}>
+                      {leader.name} ({leader.email}) — Youth Volunteer Leader
+                    </option>
+                  ))}
+                </select>
+
+                {selectedLeaderUid && (() => {
+                  const chosen = youthLeaders.find(u => u.uid === selectedLeaderUid);
+                  if (!chosen) return null;
+                  return (
+                    <div className="mt-2 p-2.5 bg-blue-950/60 border border-blue-800/80 rounded-xl text-xs space-y-0.5">
+                      <div className="flex items-center justify-between font-bold text-blue-200">
+                        <span>Assigned: {chosen.name}</span>
+                        <span className="px-2 py-0.5 bg-blue-900 text-blue-200 rounded text-[9px] font-black uppercase tracking-wider">
+                          {chosen.role}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-slate-300 truncate">{chosen.email} {chosen.contactNumber ? `• ${chosen.contactNumber}` : ''}</div>
+                    </div>
+                  );
+                })()}
+
+                {getAvailableLeadersForEdit(editingGroup).length === 0 && !selectedLeaderUid && (
+                  <div className="mt-1.5 p-2 bg-amber-950/40 border border-amber-800/60 rounded-xl text-[11px] text-amber-300 space-y-1">
+                    <p>⚠️ All registered Youth Leaders are assigned to other groups.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Assign Members Section */}
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1 flex items-center justify-between">
+                  <span>Assign Group Members ({selectedMemberUids.length})</span>
+                  <span className="text-[10px] text-emerald-400 font-mono font-bold">Role: MEMBER</span>
+                </label>
+                <select
+                  value={memberPickerUid}
+                  onChange={(e) => {
+                    const uid = e.target.value;
+                    if (uid && !selectedMemberUids.includes(uid)) {
+                      setSelectedMemberUids(prev => [...prev, uid]);
+                    }
+                    setMemberPickerUid('');
+                  }}
+                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">+ Select a member to add to this group...</option>
+                  {allMembers.map((m) => {
+                    const isAlreadySelected = selectedMemberUids.includes(m.uid);
+                    const currentGroupInfo = m.groupId ? `Currently in ${m.groupId}` : 'Unassigned';
+                    return (
+                      <option key={m.uid} value={m.uid} disabled={isAlreadySelected}>
+                        {m.name} ({m.email}) — {isAlreadySelected ? '✓ Selected' : currentGroupInfo}
+                      </option>
+                    );
+                  })}
+                </select>
+
+                {/* Selected Members Roster */}
+                <div className="mt-2 space-y-1.5 max-h-[140px] overflow-y-auto pr-1">
+                  {selectedMemberUids.length === 0 ? (
+                    <div className="p-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-[11px] text-slate-500 italic text-center">
+                      No members assigned yet. Use the dropdown above to add members.
+                    </div>
+                  ) : (
+                    selectedMemberUids.map((mUid) => {
+                      const m = allMembers.find(u => u.uid === mUid);
+                      if (!m) return null;
+                      return (
+                        <div
+                          key={mUid}
+                          className="p-2 bg-slate-950 border border-slate-800 rounded-xl flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="flex items-center space-x-2 min-w-0">
+                            <div className="w-6 h-6 rounded-full bg-emerald-950 border border-emerald-800 text-emerald-300 font-bold text-[10px] flex items-center justify-center shrink-0">
+                              {m.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-slate-100 truncate">{m.name}</div>
+                              <div className="text-[10px] text-slate-400 truncate">{m.email}</div>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMemberUids(prev => prev.filter(id => id !== mUid))}
+                            className="p-1 text-slate-400 hover:text-red-400 hover:bg-slate-900 rounded-lg transition shrink-0"
+                            title="Remove from group"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
               </div>
 
               <div className="pt-2 flex justify-end space-x-2">
@@ -731,26 +1201,6 @@ export const HostDashboard: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Assign to Group *</label>
-                <select
-                  value={uGroupId}
-                  onChange={(e) => {
-                    setUGroupId(e.target.value);
-                    const g = groups.find(item => item.groupId === e.target.value);
-                    if (g) setUOrgName(g.organizationName);
-                  }}
-                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {groups.map((g) => (
-                    <option key={g.groupId} value={g.groupId}>
-                      {g.groupId} — {g.organizationName}
-                    </option>
-                  ))}
-                  {groups.length === 0 && <option value="GRP-001">GRP-001 — Metro Youth Volunteers Unit 1</option>}
-                </select>
-              </div>
-
               <div className="pt-2 flex justify-end space-x-2">
                 <button
                   type="button"
@@ -833,26 +1283,6 @@ export const HostDashboard: React.FC = () => {
                   onChange={(e) => setUContact(e.target.value)}
                   className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-300 mb-1">Assigned Group</label>
-                <select
-                  value={uGroupId}
-                  onChange={(e) => {
-                    setUGroupId(e.target.value);
-                    const g = groups.find(item => item.groupId === e.target.value);
-                    if (g) setUOrgName(g.organizationName);
-                  }}
-                  className="w-full min-h-[44px] bg-slate-950 border border-slate-700 rounded-xl px-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  {groups.map((g) => (
-                    <option key={g.groupId} value={g.groupId}>
-                      {g.groupId} — {g.organizationName}
-                    </option>
-                  ))}
-                  {groups.length === 0 && <option value="GRP-001">GRP-001 — Metro Youth Volunteers Unit 1</option>}
-                </select>
               </div>
 
               <div className="pt-2 flex justify-end space-x-2">
