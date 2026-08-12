@@ -1,7 +1,72 @@
 // src/utils/notification.ts
 import { showSuccessToast, showErrorAlert } from './sweetalert';
+import { getFirebaseMessaging, db } from '../config/firebase';
+import { getToken, onMessage } from 'firebase/messaging';
+import { doc, updateDoc } from 'firebase/firestore';
 
 export type AlertLevelType = 'CRITICAL' | 'WARNING' | 'ADVISORY' | 'NORMAL';
+
+/**
+ * Register FCM Messaging Token for Closed-App Remote Push Notifications
+ */
+export const registerFcmToken = async (uid: string, vapidKey?: string): Promise<string | null> => {
+  try {
+    const messaging = await getFirebaseMessaging();
+    if (!messaging) {
+      console.warn('FCM Messaging is not supported on this browser/environment.');
+      return null;
+    }
+
+    const swRegistration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+    console.log('FCM Service Worker registered:', swRegistration.scope);
+
+    const effectiveVapidKey = vapidKey || (import.meta as any).env?.VITE_FIREBASE_VAPID_KEY;
+
+    const token = await getToken(messaging, {
+      serviceWorkerRegistration: swRegistration,
+      ...(effectiveVapidKey ? { vapidKey: effectiveVapidKey } : {})
+    });
+
+    if (token) {
+      console.log('FCM Registration Token generated:', token);
+      // Save FCM Token to user document in Firestore
+      const userRef = doc(db, 'users', uid);
+      await updateDoc(userRef, {
+        fcmToken: token,
+        fcmUpdatedAt: new Date().toISOString()
+      });
+      return token;
+    } else {
+      console.warn('No FCM token received. User might not have granted permission yet.');
+      return null;
+    }
+  } catch (err) {
+    console.warn('Error fetching FCM Token:', err);
+    return null;
+  }
+};
+
+/**
+ * Listen for FCM foreground push messages
+ */
+export const listenToFcmMessages = async () => {
+  try {
+    const messaging = await getFirebaseMessaging();
+    if (!messaging) return;
+
+    onMessage(messaging, (payload) => {
+      console.log('Foreground FCM Push Received:', payload);
+      const title = payload.notification?.title || payload.data?.title || '🚨 EMERGENCY ALERT';
+      const body = payload.notification?.body || payload.data?.body || 'New earthquake alert broadcast.';
+      const level = (payload.data?.alertLevel as AlertLevelType) || 'CRITICAL';
+
+      sendPushNotification(title, body, level);
+    });
+  } catch (err) {
+    console.warn('Error setting FCM message listener:', err);
+  }
+};
+
 
 /**
  * Audio Synthesizer for Earthquake Alert Sirens (Web Audio API)
@@ -85,25 +150,44 @@ export const initNotificationService = async () => {
 };
 
 /**
- * Get current browser notification permission status
+ * Get current browser or mobile WebView notification permission status
  */
 export const getNotificationPermission = (): NotificationPermission | 'unsupported' => {
-  if (!('Notification' in window)) {
-    return 'unsupported';
+  if (typeof window === 'undefined') return 'unsupported';
+
+  if ('Notification' in window) {
+    return Notification.permission;
   }
-  return Notification.permission;
+
+  // Fallback for Android WebView / Debug APK where window.Notification is not exposed
+  const isMobileEnabled = localStorage.getItem('readyalert_mobile_notif_enabled') === 'true';
+  return isMobileEnabled ? 'granted' : 'default';
 };
 
 /**
- * Request notification permission from user
+ * Request notification permission from user with Android WebView Debug APK support
  */
 export const requestNotificationPermission = async (): Promise<boolean> => {
-  if (!('Notification' in window)) {
-    showErrorAlert('Unsupported Feature', 'This browser does not support desktop/mobile push notifications.');
-    return false;
-  }
+  const isIframe = typeof window !== 'undefined' && window.self !== window.top;
 
-  const isIframe = window.self !== window.top;
+  // Support for Android WebView / Debug APK where window.Notification is not exposed natively
+  if (!('Notification' in window)) {
+    console.log('Mobile WebView detected without native window.Notification API. Enabling mobile emergency audio/vibration alerts.');
+    localStorage.setItem('readyalert_mobile_notif_enabled', 'true');
+    
+    // Trigger vibration test if supported on Android device
+    if ('vibrate' in navigator) {
+      try {
+        navigator.vibrate([200, 100, 200]);
+      } catch (e) {
+        console.warn('Vibration API error:', e);
+      }
+    }
+
+    playAudioAlarm('ADVISORY');
+    showSuccessToast('🔔 Mobile Emergency Alerts Active! Loud sirens & vibration enabled for your device.');
+    return true;
+  }
 
   try {
     let permission = Notification.permission;
@@ -117,6 +201,7 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
     }
 
     if (permission === 'granted') {
+      localStorage.setItem('readyalert_mobile_notif_enabled', 'true');
       showSuccessToast('Push Notifications Enabled! You will receive instant earthquake alerts.');
       sendPushNotification(
         '🔔 Ready Alert Notifications Active',
@@ -146,13 +231,18 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
         'Preview iFrame Restriction',
         'Web browsers restrict notification permissions inside embedded frames. Please open the app in a NEW TAB ↗️ to grant push permissions.'
       );
+    } else {
+      // Fallback enable mobile audio alert for debug APK
+      localStorage.setItem('readyalert_mobile_notif_enabled', 'true');
+      showSuccessToast('🔔 Mobile Emergency Alerts Active!');
+      return true;
     }
     return false;
   }
 };
 
 /**
- * Trigger local browser push notification & audio alert
+ * Trigger local browser/mobile push notification & audio alert
  */
 export const sendPushNotification = async (
   title: string,
@@ -160,38 +250,47 @@ export const sendPushNotification = async (
   alertLevel: AlertLevelType = 'CRITICAL',
   skipSound: boolean = false
 ) => {
+  // Always trigger audio siren synth
   if (!skipSound) {
     playAudioAlarm(alertLevel);
   }
 
-  if (!('Notification' in window) || Notification.permission !== 'granted') {
-    return;
+  // Always trigger device vibration on mobile
+  if ('vibrate' in navigator) {
+    try {
+      navigator.vibrate(alertLevel === 'CRITICAL' ? [300, 100, 300, 100, 500] : [200, 100, 200]);
+    } catch (vErr) {
+      console.warn('Vibrate error:', vErr);
+    }
   }
 
-  const options: any = {
-    body,
-    icon: '/favicon.ico',
-    badge: '/favicon.ico',
-    tag: `readyalert-${Date.now()}`,
-    requireInteraction: alertLevel === 'CRITICAL' || alertLevel === 'WARNING',
-    vibrate: alertLevel === 'CRITICAL' ? [300, 100, 300, 100, 500] : [200, 100, 200],
-  };
+  // Handle standard Web Notification API if available
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const options: any = {
+      body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      tag: `readyalert-${Date.now()}`,
+      requireInteraction: alertLevel === 'CRITICAL' || alertLevel === 'WARNING',
+      vibrate: alertLevel === 'CRITICAL' ? [300, 100, 300, 100, 500] : [200, 100, 200],
+    };
 
-  try {
-    if ('serviceWorker' in navigator) {
-      const reg = await navigator.serviceWorker.ready;
-      if (reg && reg.showNotification) {
-        await reg.showNotification(title, options);
-        return;
-      }
-    }
-    new Notification(title, options);
-  } catch (err) {
-    console.warn('Fallback Notification constructor:', err);
     try {
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.ready;
+        if (reg && reg.showNotification) {
+          await reg.showNotification(title, options);
+          return;
+        }
+      }
       new Notification(title, options);
-    } catch (e) {
-      console.error('Push notification trigger error:', e);
+    } catch (err) {
+      console.warn('Fallback Notification constructor:', err);
+      try {
+        new Notification(title, options);
+      } catch (e) {
+        console.error('Push notification trigger error:', e);
+      }
     }
   }
 };

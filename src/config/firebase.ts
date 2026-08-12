@@ -2,6 +2,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getMessaging, isSupported } from 'firebase/messaging';
 import firebaseConfigData from '../../firebase-applet-config.json';
 
 const firebaseConfig = firebaseConfigData;
@@ -19,4 +20,13 @@ const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatab
 
 export const db = dbId ? getFirestore(app, dbId) : getFirestore(app);
 
+// Initialize Firebase Messaging dynamically if supported in runtime environment
+export const getFirebaseMessaging = async () => {
+  if (typeof window !== 'undefined' && await isSupported()) {
+    return getMessaging(app);
+  }
+  return null;
+};
+
 export default app;
+
