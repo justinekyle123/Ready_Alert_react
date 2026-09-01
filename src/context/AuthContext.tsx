@@ -55,6 +55,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // Seed demo accounts asynchronously into Firestore on boot
     seedDemoAccounts().catch(() => {});
 
+    // Keep the splash screen on screen for roughly 3 seconds minimum
+    const SPLASH_MIN_MS = 3000;
+    const splashStartedAt = Date.now();
+    let finished = false;
+
+    const finishLoading = () => {
+      if (finished) return;
+      finished = true;
+      const remaining = SPLASH_MIN_MS - (Date.now() - splashStartedAt);
+      if (remaining > 0) {
+        setTimeout(() => setLoading(false), remaining);
+      } else {
+        setLoading(false);
+      }
+    };
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
@@ -65,17 +81,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setUserProfile(local);
         }
       }
-      setLoading(false);
+      finishLoading();
     });
 
-    // Timeout safety fallback
-    const timeout = setTimeout(() => {
-      setLoading(false);
-    }, 800);
+    // Timeout safety fallback so the app never hangs on the splash
+    const fallback = setTimeout(finishLoading, SPLASH_MIN_MS);
 
     return () => {
       unsubscribe();
-      clearTimeout(timeout);
+      clearTimeout(fallback);
     };
   }, []);
 
