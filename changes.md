@@ -291,6 +291,32 @@ Isang pangkalahatang buod ng mga huling naisagawang update at feature para sa **
 - **Kailangan Mong Gawin:**
   - I-download ang `google-services.json` (Firebase Console → Project settings → Your apps → Android app, package `com.example.app`) → ilagay sa `android/app/google-services.json` → i-commit → rebuild. Babalik agad ang native push pagkatapos nito, walang code change.
 
+---
+
+### 26. Integrasyon ng SMS — totoong text alerts gamit ang phone gateway 📲🚨
+- **Ang Binuo:**
+  - `functions/src/phone.ts` — `normalizePhone()`: isang E.164 value (`+639XXXXXXXXX`) ang lahat ng spelling (`0917…`, `917…`, `+63 917…`, `0063…`, `(0917)…`, may space/dash/dot), at **tinatanggihan** ang landline (`+63 2…`), banyagang numero, at placeholder. Kasama sa tinatanggihan ang US na numero sa demo accounts (`+1 800 555 0199`). Mahalaga ito sa gastos: dalawang spelling ng isang numero = dalawang bayad.
+  - `functions/src/sms.ts` — message builder (1 segment = 160 chars, ASCII lang dahil ang emoji o curly quote ay nagpapalit sa UCS-2 kung saan **70 chars lang** ang segment), recipient planner (de-duplicate, opt-in/opt-out, cap), provider sa likod ng interface (madaling palitan ng Semaphore), batch + per-recipient records, at daily quota sa `system/smsDaily` (transaction, para hindi mag-doble ang dalawang sabay na alert).
+  - Bagong **`sendAlertSms`** trigger at **`sendTestSms`** callable sa `functions/src/index.ts`.
+  - UI: **"Send test SMS to my number"** button sa SMS Gateway card (Host overview) at `sendTestSms` sa `useGatewayHealth.ts`. Naidagdag din ang `smsSummary` sa `Alert` type.
+- **Bakit hiwalay na function ang SMS:**
+  - Ang SMS fan-out ay **mabagal** (rate-limited na chunks) at pwedeng mabigo nang mag-isa. Kung isasama ito sa `sendAlertPush`, maaantala o mabibigo ang push kapag patay ang telepono. Hiwalay = hindi kailanman naaapektuhan ang push, at pwedeng i-deploy/i-disable nang isa-isa.
+- **Bakit WALANG automatic retry:**
+  - Walang idempotency key ang gateway, kaya ang retry ng isang malabong failure ay pwedeng **mag-doble ng text at mag-doble ng bayad**. Ang failure ay nire-record (`provider_error`) para sa tao, hindi binabato nang paulit-ulit.
+- **Mga default (safe pero gumagana):**
+  - **RED/CRITICAL lang**, `maxRecipientsPerAlert: 10`, `dailyCap: 50`, `chunkSize: 5`, 4s pagitan. Nasa `config/sms` ang lahat at binabasa **sa oras ng send**, kaya walang redeploy — isang linya lang para idagdag ang lahat ng levels. Ang maling value ay bumabalik sa default, hindi nagpapaluwag ng cap.
+- **Verification (hindi lang "kumakompila"):**
+  - **21 unit tests** (`npm test`) sa normalisasyon, message building, recipient planning, config parsing, at chunking — walang naipadalang SMS.
+  - **Live na probe sa `api.sms-gate.app`**: `HTTP 400 {"message":"invalid phone number"}` — kumpirmadong tumatanggap ng auth at payload shape ang gateway, at **walang naipadala**. Kumpirmado rin: relay `pass`, telepono `realme/RMX3269` online, **Cloud mode**.
+  - **Dry run sa tunay na dispatcher** (in-memory Firestore): 2 targets, 5 skips (`duplicate`, `no_phone`, `opt_out`, `not_ph_mobile`), 130/160 char body — **zero SMS**.
+  - **Guardrails:** `sms_disabled`, `level_not_enabled`, `gateway_credentials_missing` — lahat tama. **Daily cap:** `dailyCap: 1` → 1 lang ang naipadala, ang iba ay `daily_cap`.
+- **Isang tunay na bug na nahuli:**
+  - Hindi nag-narrow ang `!result.ok` sa `npm run lint` (walang `strict` sa root `tsconfig.json`) kahit gumagana sa `functions` build. Naayos gamit ang `isInvalidPhone()` type guard, na gumagana sa dalawang config.
+- **Kailangan Mong Gawin (2 command):**
+  - `firebase functions:secrets:set ANDROID_SMS_GATEWAY_LOGIN` at `..._PASSWORD` (ang gateway username/password — **hindi** ito isinusulat sa repo), tapos `firebase deploy --only functions`.
+  - Ilagay ang tunay na `+63` number sa My Account & Profile, tapos pindutin ang **Send test SMS** — isang text lang sa sarili mong numero, iyon ang huling patunay na gumagana ang buong chain.
+  - Buong runbook: `SMS_PLAN.md` §12.
+
 
 
 

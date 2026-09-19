@@ -68,6 +68,30 @@ export interface Alert {
   groupId?: string; // Optional: specific group or broadcast
   isBackupAlert: boolean; // True if Host overrode/sent backup alert
   active: boolean;
+  /** Written by sendAlertSms (functions/src/sms.ts) after the SMS fan-out. */
+  smsSummary?: AlertSmsSummary;
+}
+
+/**
+ * Outcome of the SMS fan-out for one alert.
+ * Keep in sync with AlertSmsSummary in functions/src/sms.ts.
+ */
+export interface AlertSmsSummary {
+  status: 'sent' | 'partial' | 'dry_run' | 'skipped' | 'failed';
+  /** Machine-readable reason when nothing (or not everything) was sent. */
+  reason: string | null;
+  level: string;
+  groupId: string;
+  /** The exact message body that was sent, for auditing. */
+  body: string;
+  targeted: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  batches: number;
+  dryRun: boolean;
+  provider: string | null;
+  completedAt: string;
 }
 
 /**

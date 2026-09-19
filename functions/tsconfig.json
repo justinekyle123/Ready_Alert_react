@@ -15,5 +15,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests are for `npm test` (tsx), not deployment: excluding them keeps them out of lib/.
+  "exclude": ["node_modules", "src/**/*.test.ts"]
 }

@@ -1,8 +1,13 @@
 /**
- * Ready Alert — FCM sender
+ * Ready Alert — broadcast sender (FCM push + SMS)
  *
- * Triggered whenever a document is created in the `alerts` collection and pushes
- * the alert to every device that registered a token in `users/{uid}.fcmToken`.
+ * Triggered whenever a document is created in the `alerts` collection:
+ *   - `sendAlertPush` pushes to every device that registered `users/{uid}.fcmToken`
+ *   - `sendAlertSms`  texts every member in scope with a usable PH mobile number
+ *
+ * The two are deliberately **separate functions**. SMS fan-out is slow (rate-limited
+ * chunks) and can fail on its own; keeping them apart means a dead gateway phone can
+ * never delay or fail the push, and each channel can be deployed or disabled alone.
  *
  * One multicast call covers all three transports at once — FCM routes each token
  * to the right platform using the same `notification` payload:
@@ -27,6 +32,20 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import { probeGateway } from './gateway';
+import { describePhoneRejection, isInvalidPhone, normalizePhone } from './phone';
+import {
+  SMS_CONFIG_COLLECTION,
+  SMS_CONFIG_DOC_ID,
+  buildSmsBody,
+  consumeDailyQuota,
+  createGatewayProvider,
+  dispatchAlertSms,
+  resolveSmsConfig,
+  type SmsConfig,
+  type SmsProvider,
+  type SmsUserRecord,
+} from './sms';
+import { MessagePriority } from 'android-sms-gateway';
 
 initializeApp();
 
@@ -64,6 +83,32 @@ const GATEWAY_HEALTH_DOC_ID = 'gatewayHealth';
 
 const writeGatewayHealth = (health: Awaited<ReturnType<typeof probeGateway>>) =>
   db.collection(GATEWAY_HEALTH_COLLECTION).doc(GATEWAY_HEALTH_DOC_ID).set(health);
+
+/**
+ * SMS behaviour comes from `config/sms` (see SMS_PLAN.md §7) so levels, caps and the
+ * dry-run switch can be changed from the console **without a redeploy** — the point
+ * being that a runaway broadcast can be stopped while it is happening.
+ */
+const loadSmsConfig = async (): Promise<SmsConfig> => {
+  const snapshot = await db.collection(SMS_CONFIG_COLLECTION).doc(SMS_CONFIG_DOC_ID).get();
+  return resolveSmsConfig(snapshot.exists ? (snapshot.data() as Record<string, unknown>) : undefined);
+};
+
+/**
+ * Build the transport, or return `null` when the secrets are not available yet —
+ * a missing secret should surface as `gateway_credentials_missing`, not an exception.
+ */
+const buildSmsProvider = (config: SmsConfig): SmsProvider | null => {
+  try {
+    const login = GATEWAY_LOGIN.value();
+    const password = GATEWAY_PASSWORD.value();
+    if (!login || !password) return null;
+    return createGatewayProvider({ login, password, deviceId: config.deviceId });
+  } catch (err) {
+    logger.warn('SMS gateway secrets are not readable — SMS disabled for now.', err);
+    return null;
+  }
+};
 
 /** Errors that mean the token is dead and should be removed from Firestore */
 const STALE_TOKEN_CODES = new Set([
@@ -109,12 +154,20 @@ const chunk = <T>(items: T[], size: number): T[][] => {
  * Devices to notify for an alert: the whole user base for global alerts,
  * otherwise only the members of the alert's volunteer group.
  */
-const fetchRecipients = async (groupId: string): Promise<Recipient[]> => {
+/**
+ * Users inside an alert's scope: the whole user base for global alerts, otherwise
+ * only the members of the alert's volunteer group. Shared by push and SMS so both
+ * channels always address the same audience.
+ */
+const fetchUsersInScope = async (groupId: string) => {
   const usersRef = db.collection('users');
-  const snapshot =
-    groupId && groupId !== GLOBAL_SCOPE
-      ? await usersRef.where('groupId', '==', groupId).get()
-      : await usersRef.get();
+  return groupId && groupId !== GLOBAL_SCOPE
+    ? await usersRef.where('groupId', '==', groupId).get()
+    : await usersRef.get();
+};
+
+const fetchRecipients = async (groupId: string): Promise<Recipient[]> => {
+  const snapshot = await fetchUsersInScope(groupId);
 
   const recipients: Recipient[] = [];
   snapshot.forEach((userDoc) => {
@@ -125,6 +178,23 @@ const fetchRecipients = async (groupId: string): Promise<Recipient[]> => {
   });
 
   return recipients;
+};
+
+/** SMS candidates for an alert — phone numbers are normalised later, in sms.ts. */
+const fetchSmsCandidates = async (groupId: string): Promise<SmsUserRecord[]> => {
+  const snapshot = await fetchUsersInScope(groupId);
+
+  const candidates: SmsUserRecord[] = [];
+  snapshot.forEach((userDoc) => {
+    candidates.push({
+      uid: userDoc.id,
+      name: userDoc.get('name'),
+      contactNumber: userDoc.get('contactNumber'),
+      smsOptIn: userDoc.get('smsOptIn'),
+    });
+  });
+
+  return candidates;
 };
 
 /**
@@ -357,5 +427,145 @@ export const sendAlertPush = onDocumentCreated(
       `Alert ${alertId} (${alertLevel} / ${groupId}) → ${delivered} delivered, ` +
         `${failed} failed out of ${tokens.length} device(s).`,
     );
+  },
+);
+
+/**
+ * SMS broadcast for a new alert. Runs independently of `sendAlertPush`, honours
+ * `config/sms` (levels, caps, dry run, kill switch) and records a per-recipient
+ * outcome on the alert. Never throws — a gateway failure is a status, not a crash.
+ */
+export const sendAlertSms = onDocumentCreated(
+  {
+    document: 'alerts/{alertId}',
+    region: REGION,
+    secrets: [GATEWAY_LOGIN, GATEWAY_PASSWORD],
+    // SMS is rate-limited in chunks, so this needs far more headroom than push.
+    timeoutSeconds: 300,
+  },
+  async (event) => {
+    const alertId = event.params.alertId;
+    const alert = event.data?.data() as AlertRecord | undefined;
+
+    if (!alert) {
+      logger.warn(`Alert ${alertId} had no data — no SMS sent.`);
+      return;
+    }
+
+    // Only active alarms are broadcast; resolved history stays silent.
+    if (alert.active === false) {
+      logger.info(`Alert ${alertId} is not active — no SMS sent.`);
+      return;
+    }
+
+    const alertLevel = String(alert.alertLevel ?? 'GREEN').toUpperCase();
+    const groupId = String(alert.groupId ?? GLOBAL_SCOPE);
+    const message =
+      typeof alert.message === 'string' && alert.message.trim().length > 0
+        ? alert.message.trim()
+        : 'New earthquake alert issued.';
+
+    try {
+      const config = await loadSmsConfig();
+      const users = await fetchSmsCandidates(groupId);
+
+      const summary = await dispatchAlertSms({
+        db,
+        alertId,
+        alertLevel,
+        message,
+        groupId,
+        triggeredByName: alert.triggeredByName,
+        users,
+        config,
+        provider: buildSmsProvider(config),
+        log: (line) => logger.info(line),
+      });
+
+      if (summary.status === 'skipped') {
+        logger.info(`Alert ${alertId}: SMS skipped (${summary.reason}).`);
+      }
+    } catch (err) {
+      // Push already went out — this must not look like the alert failed.
+      logger.error(`SMS dispatch failed for alert ${alertId}. Push was unaffected.`, err);
+    }
+  },
+);
+
+/** `+639171234567` → `+6391712****7`, so logs and toasts never leak a full number. */
+const maskPhone = (e164: string): string =>
+  e164.length <= 8 ? e164 : `${e164.slice(0, 7)}****${e164.slice(-2)}`;
+
+/**
+ * Send ONE real SMS to the signed-in user's own number, to prove the whole chain
+ * (credentials → relay → phone → SIM) works before an emergency does.
+ *
+ * Deliberately ignores `dryRun` — verifying the gateway is the whole point — but the
+ * `enabled` kill switch still applies, and the send is charged against the daily cap
+ * so a test cannot be looped to bypass it.
+ */
+export const sendTestSms = onCall(
+  { region: REGION, secrets: [GATEWAY_LOGIN, GATEWAY_PASSWORD] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Sign in to send a test SMS.');
+    }
+
+    const config = await loadSmsConfig();
+
+    if (!config.enabled) {
+      throw new HttpsError(
+        'failed-precondition',
+        'SMS is switched off (config/sms → enabled: false). Turn it on before testing.',
+      );
+    }
+
+    const provider = buildSmsProvider(config);
+    if (!provider) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Gateway credentials are not configured. Run: firebase functions:secrets:set ANDROID_SMS_GATEWAY_LOGIN (and ..._PASSWORD), then redeploy.',
+      );
+    }
+
+    const profile = await db.collection('users').doc(request.auth.uid).get();
+    const normalized = normalizePhone(profile.get('contactNumber'));
+
+    if (isInvalidPhone(normalized)) {
+      throw new HttpsError(
+        'failed-precondition',
+        `This account has no usable Philippine mobile number (${describePhoneRejection(normalized.reason)}). Add one in My Account & Profile first.`,
+      );
+    }
+
+    const dateKey = new Date().toISOString().slice(0, 10);
+    const quota = await consumeDailyQuota(db, 1, config.dailyCap, dateKey);
+    if (quota.granted < 1) {
+      throw new HttpsError(
+        'resource-exhausted',
+        `Daily SMS limit reached (${config.dailyCap}). Raise dailyCap in config/sms to keep testing.`,
+      );
+    }
+
+    const body = buildSmsBody({
+      level: 'GREEN',
+      message: 'TEST ONLY - Ready Alert SMS is working on this account. No emergency.',
+      prefix: config.prefix,
+    });
+
+    const result = await provider.send({
+      to: [normalized.e164],
+      body,
+      priority: MessagePriority.Default,
+    });
+
+    logger.info(`Test SMS sent via ${provider.name} to ${maskPhone(normalized.e164)} (${result.messageId}).`);
+
+    return {
+      messageId: result.messageId,
+      to: maskPhone(normalized.e164),
+      body,
+      remainingToday: quota.remaining,
+    };
   },
 );

@@ -12,10 +12,22 @@ import { GatewayHealth } from '../@types';
  * (monitorGatewayHealth) and whenever someone presses "Check now"
  * (checkGatewayHealth). This hook only reads it.
  */
+/**
+ * Result of the one-message gateway test (functions/src/index.ts → sendTestSms).
+ * The number comes back masked: the full number is never echoed to the client.
+ */
+export interface TestSmsResult {
+  messageId: string;
+  to: string;
+  body: string;
+  remainingToday: number;
+}
+
 export const useGatewayHealth = () => {
   const [health, setHealth] = useState<GatewayHealth | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [checking, setChecking] = useState<boolean>(false);
+  const [sendingTest, setSendingTest] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -53,5 +65,23 @@ export const useGatewayHealth = () => {
     }
   }, []);
 
-  return { health, loading, checking, error, checkNow };
+  /**
+   * Send ONE real SMS to the signed-in user's own number.
+   *
+   * The only way to prove the whole chain (credentials → relay → phone → SIM load)
+   * before an emergency does. Throws with the server's message so the caller can show it.
+   */
+  const sendTestSms = useCallback(async (): Promise<TestSmsResult> => {
+    setSendingTest(true);
+    try {
+      const callable = httpsCallable<void, TestSmsResult>(functions, 'sendTestSms');
+      const result = await callable();
+      setError(null);
+      return result.data;
+    } finally {
+      setSendingTest(false);
+    }
+  }, []);
+
+  return { health, loading, checking, sendingTest, error, checkNow, sendTestSms };
 };
