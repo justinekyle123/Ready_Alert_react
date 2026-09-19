@@ -1,8 +1,9 @@
 // src/components/GatewayStatusCard.tsx
 import React from 'react';
-import { SignalHigh, RefreshCw, Smartphone, TriangleAlert } from 'lucide-react';
+import { SignalHigh, RefreshCw, Send, Smartphone, TriangleAlert } from 'lucide-react';
 import { useGatewayHealth } from '../hooks/useGatewayHealth';
 import { GatewayStatus } from '../@types';
+import { showErrorAlert, showSuccessToast } from '../utils/sweetalert';
 
 interface StatusStyle {
   label: string;
@@ -63,13 +64,25 @@ const formatLastSeen = (iso: string): string => {
 };
 
 /**
- * SMS gateway readiness for the Host overview.
+ * SMS gateway readiness for the Host overview, plus a one-tap real send.
  *
- * This reports whether the *phone* can send SMS. It is not proof that an alert
- * was texted — the SMS fan-out itself ships in Phase 3 of SMS_PLAN.md.
+ * The status tells you whether the *phone* is reachable; the test button is the only
+ * thing that proves the whole chain works, so it is deliberately next to it.
  */
 export const GatewayStatusCard: React.FC = () => {
-  const { health, loading, checking, error, checkNow } = useGatewayHealth();
+  const { health, loading, checking, sendingTest, error, checkNow, sendTestSms } =
+    useGatewayHealth();
+
+  const handleTestSms = async () => {
+    try {
+      const result = await sendTestSms();
+      showSuccessToast(
+        `Test SMS accepted for ${result.to}. Check the phone — no message means the SIM has no load.`
+      );
+    } catch (err: any) {
+      showErrorAlert('Test SMS failed', err?.message || 'Could not send a test SMS.');
+    }
+  };
 
   // No document at all means the heartbeat has never run — that is a setup
   // problem, not an ambiguous one, so report it as `unconfigured`.
@@ -146,8 +159,20 @@ export const GatewayStatusCard: React.FC = () => {
         </div>
       )}
 
+      {status !== 'unconfigured' && (
+        <button
+          onClick={handleTestSms}
+          disabled={sendingTest}
+          className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 rounded-xl text-[11px] font-bold text-slate-200 flex items-center justify-center gap-1.5 transition border border-slate-700"
+        >
+          <Send className={`w-3.5 h-3.5 text-emerald-400 ${sendingTest ? 'animate-pulse' : ''}`} />
+          {sendingTest ? 'Sending test SMS…' : 'Send test SMS to my number'}
+        </button>
+      )}
+
       <p className="text-[10px] text-slate-500 italic">
-        Readiness only — SMS alerts are not sent yet; fan-out ships in Phase 3 of SMS_PLAN.md.
+        Readiness and a one-message test. Alert broadcasts are sent by the Cloud Function
+        (RED by default — levels, caps and the dry run live in <span className="font-mono">config/sms</span>).
       </p>
     </div>
   );
