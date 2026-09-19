@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#dc2626"/>
+      <stop offset="0.5" stop-color="#ef4444"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.25" cy="0.18" r="0.9">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Full-bleed background: launchers and iOS mask this themselves -->
+  <rect width="1024" height="1024" fill="url(#brand)"/>
+  <rect width="1024" height="1024" fill="url(#sheen)"/>
+
+  <!-- Seismic / pulse waveform — the app's brand mark -->
+  <path d="M 240 512 H 372 L 424 414 L 468 622 L 516 250 L 564 744 L 612 420 L 656 574 L 700 512 H 784"
+        fill="none" stroke="#ffffff" stroke-width="76"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -3,6 +3,7 @@ name: Build Android APK
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -34,12 +35,26 @@ jobs:
       with:
         java-version: '21'
         distribution: 'zulu'
+        cache: 'gradle'
 
     - name: Build Android APK
       run: |
         cd android
         chmod +x gradlew
         ./gradlew assembleDebug
+
+    # Prints the signing certificate of the APK that was just built.
+    # The SHA-256 must stay identical on every run — if it ever changes, an APK
+    # installed from a previous run can no longer be updated in place and Android
+    # reports "App not installed". Check this line first when that happens.
+    - name: Verify APK signing certificate
+      run: |
+        APK="android/app/build/outputs/apk/debug/app-debug.apk"
+        BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+        "$BUILD_TOOLS/apksigner" verify --print-certs "$APK"
+        echo "### APK size: $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+        "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" \
+          | grep -E "SHA-256|Signer #1 certificate DN" >> "$GITHUB_STEP_SUMMARY" || true
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4

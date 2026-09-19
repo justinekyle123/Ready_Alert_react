@@ -12,7 +12,10 @@ Narito ang mapa ng ating buong proyekto:
 Ready Alert/
 ├── firebase-applet-config.json  # Configuration ng Firebase connection (tingnan ang FIREBASE_SETUP.md)
 ├── FIREBASE_SETUP.md             # Gabay sa pag-configure ng Firebase keys, VAPID, at push notifications
+├── SMS_PLAN.md                   # Plano para sa SMS alerts (phone-as-gateway, hindi pa implemented)
 ├── firebase.json                 # Firebase CLI config (functions + firestore rules deploy)
+├── assets/                       # SVG sources ng app logo at splash (i-edit dito, tapos `npm run icons`)
+├── scripts/                      # Build helper scripts (rasterize ng icons papuntang native assets)
 ├── functions/                    # Cloud Function na nagpapadala ng FCM push sa lahat ng devices
 │   ├── src/index.ts              # sendAlertPush — tumatakbo tuwing may bagong alert document
 ├── firestore.rules               # Security rules ng ating Firestore database

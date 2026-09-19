@@ -342,6 +342,7 @@ Firebase console → Firestore → `users` → your user doc → confirm an `fcm
 | Native: no permission dialog appears | Android 13+ without `POST_NOTIFICATIONS` in `AndroidManifest.xml`, or permission was already denied — re-enable it in device Settings. |
 | Native: token logged but no notification | No sender yet (§6). Also confirm Android messages are sent with priority `high` (`android: { priority: 'high' }`). |
 | Native: alerts stop after signing out | Expected — `clearFcmToken()` detaches the device. Tap **Push Notifications** again to re-register. |
+| **"App not installed"** when installing the APK | The new APK is signed with a different key than the installed app (or is a downgrade / corrupt download). **Uninstall the app, then install.** Confirm the cause by comparing the `apksigner verify --print-certs` SHA-256 in the CI step summary between runs — it must never change. Also make sure you extracted the artifact ZIP. |
 | Deploy fails: "Cannot create trigger ... region" | `REGION` in `functions/src/index.ts` doesn't match your Firestore database location. |
 | Deploy fails: Node runtime unsupported | `functions/package.json` pins Node 22 (required by `firebase-admin` v14). Update your `firebase-tools` version. |
 | Function logs `No registered device for scope` | No user in scope has an `fcmToken` — the client never granted permission, or you switched Firebase projects and the old tokens are stale. |
@@ -384,6 +385,24 @@ Follow this in order. Each phase ends with something you can actually see, so a 
 | `google-services.json` (download) | `android/app/google-services.json` |
 
 ### Phase 3 — build and install the APK
+
+> **Updating the app icon later:** edit the SVG sources in `assets/` (e.g. `assets/icon.svg`), then run `npm run icons` and rebuild. Android caches launcher icons aggressively — if the old icon survives a reinstall, uninstall the app first or restart the launcher.
+
+#### Building with GitHub Actions (`android-build.yml`)
+
+The workflow runs on every push to `main`, and manually from the **Actions** tab (`workflow_dispatch`).
+
+**Download correctly:** GitHub wraps *every* artifact in a ZIP, so you get `app-debug.apk.zip` — **extract it**, don't just rename it to `.apk`.
+
+**Signing (why "App not installed" happened):** the Android plugin signs debug builds with `~/.android/debug.keystore`. That file does not exist on a fresh CI runner, so it gets regenerated **with a new random key on every single run** — meaning each build was signed by a *different* key. Android refuses to update an app whose signature doesn't match the installed one, and reports the generic *"App not installed"*.
+
+Fixed by `android/app/debug-ci.keystore`, wired to `signingConfigs.debug` in `android/app/build.gradle`, so CI and local builds now share one stable key. The workflow prints the APK's certificate fingerprint, which **must be identical on every run**:
+
+```
+apksigner verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+⚠️ **Do this once now:** the app on your phone carries the *old* auto-generated key, so **uninstall it first**, then install the new APK. After that, every future build updates in place. If an install ever fails again, jump straight to the fingerprint in the CI step summary — if it changed, something is generating a new keystore.
 
 ```bash
 npm run build

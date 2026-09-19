@@ -225,6 +225,48 @@ Isang pangkalahatang buod ng mga huling naisagawang update at feature para sa **
 - **Naayos ang 404 sa Firebase config ng Service Worker:**
   - Dinagdag sa `vite.config.ts` ang isang maliit na plugin na nagsi-serve at naglalabas ng `/firebase-applet-config.json` mula sa project root, dahil dati ay hindi ito makita ng `public/firebase-messaging-sw.js` (404) kaya hindi gumagana ang background push sa web.
 
+---
+
+### 22. Branded Emergency App Icon & Splash Screen 🚨🎨
+- **Pinalitan na ang Capacitor Logo:**
+  - Dating default na Capacitor logo ang lumalabas sa launcher ng phone at sa splash screen. Ngayon, custom na **Ready Alert** logo na — pulang gradient (red → amber, kapareho ng header badge sa app) na may puting **seismic pulse waveform** sa gitna.
+- **Editable na SVG Sources (`assets/`):**
+  - `icon.svg`, `icon-background.svg`, `icon-foreground.svg`, `splash.svg`, at `splash-dark.svg` — dito pwedeng baguhin ang disenyo anumang oras.
+- **Isang Command Lang para I-regenerate (`npm run icons`):**
+  - `scripts/build-app-icons.mjs` ang nagra-rasterize ng SVG papuntang PNG (gamit ang `sharp`), at `@capacitor/assets` ang gagawa ng lahat ng density folders — **136 Android assets** (adaptive icon background/foreground, legacy + round icons, portrait/landscape/night splash) at **13 iOS assets** (AppIcon + splash).
+- **Tama ang Safe Zone ng Adaptive Icon:**
+  - Ang waveform ay nakapaloob sa gitnang 66dp ng 108dp canvas, kaya hindi ito napuputol kahit bilog o squircle ang mask ng launcher.
+- **Ginabay sa Documentation:** Nakadagdag sa `FIREBASE_SETUP.md` ang paalala tungkol sa pag-clear ng launcher icon cache ng Android pagkatapos mag-reinstall.
+
+---
+
+### 23. SMS Gateway Health Check — Online/Offline Detection 📡🔋
+- **Bagong Cloud Functions (`functions/src/gateway.ts`):**
+  - Ang `probeGateway()` ay tumitingin sa **dalawang bagay** na kailangan para makapag-SMS: (1) kung buhay ang gateway relay (`getHealth()`), at (2) kung konektado pa ang telepono base sa `lastSeen` ng device (`getDevices()`). Ang pangalawa ang madalas sumisira — naubos ang baterya, walang signal, o pinatay ng battery optimization ang app.
+  - Lima ang posibleng status: `online`, `degraded`, `offline`, `unconfigured`, at `unknown` — hindi lang basta "offline", para malaman agad kung alin ang sira.
+- **Dalawang Bagong Endpoints:**
+  - `monitorGatewayHealth` — **heartbeat tuwing 5 minuto** na nagsusulat sa `system/gatewayHealth`, kaya laging sariwa ang status kahit walang nakabukas na app.
+  - `checkGatewayHealth` — callable function para sa **"Check now"** button kung ayaw mong maghintay ng 5 minuto, lalo na habang nagse-set up ka pa lang ng telepono.
+- **Bagong UI:**
+  - **`GatewayStatusCard.tsx`** sa Host Overview: status color, pangalan ng device, kung kailan huling nag-report, bilang ng online devices, latency, at malinaw na error message kapag hindi online — kasama ang exact `firebase functions:secrets:set` commands kapag hindi pa naka-configure.
+  - **Readiness strip sa `TriAlarmPanel.tsx`:** nakikita ng Leader at Host ang status ng SMS gateway **bago** sila mag-broadcast ng alert.
+- **Bagong `useGatewayHealth.ts` Hook:** real-time na `onSnapshot` sa health document, kaya awtomatikong nag-u-update ang UI sa lahat ng device.
+- **Paalala:** Ito ay **readiness indicator** — hindi pa nagpapadala ng SMS (Phase 3 pa iyon sa `SMS_PLAN.md`), kaya malinaw itong nakasaad sa card para walang kalituhan.
+
+---
+
+### 24. Naayos ang "App not installed" sa GitHub Actions APK 🔐📲
+- **Ang Sanhi:**
+  - Ang `assembleDebug` ay gumagamit ng `~/.android/debug.keystore`. Sa isang bagong GitHub Actions runner, **wala ang file na iyon**, kaya awtomatikong gumagawa ang Android plugin ng bago — na may **random na key** — sa **bawat** run. Ibig sabihin, iba-iba ang lagda (signature) ng bawat APK, at hindi tinatanggap ng Android ang pag-update ng naka-install na app kung iba ang key: "App not installed".
+- **Ang Ayos:**
+  - Naidagdag ang `android/app/debug-ci.keystore` (stable na debug key) at nakakabit na ito sa `signingConfigs.debug` sa `android/app/build.gradle`. Pareho na ngayong key ang CI at local builds, kaya tuloy-tuloy nang mag-u-update ang app.
+  - Hindi ito release key — hiwalay pa rin ang keystore para sa Google Play, at hindi ito sekreto (debug-only).
+- **Verification sa Workflow:**
+  - Bagong step na **`Verify APK signing certificate`** na naglalabas ng `apksigner verify --print-certs` fingerprint papunta sa GitHub Step Summary — kaya makikita mo agad kung nagbago ang key kung sakaling bumalik ang error.
+  - Naidagdag din ang `workflow_dispatch` (pwedeng i-trigger manually sa Actions tab) at Gradle caching sa `setup-java` para mas mabilis ang build.
+- **Isang Beses Lang na Hakbang:**
+  - Dahil luma pa ang key na nasa telepono, **i-uninstall muna ang app** bago i-install ang bagong APK. Pagkatapos nito, diretso nang nag-u-update ang mga susunod na build.
+
 
 
 

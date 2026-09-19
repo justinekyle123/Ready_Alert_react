@@ -8,6 +8,7 @@ import { HeaderBar } from '../components/HeaderBar';
 import { AlertBanner } from '../components/AlertBanner';
 import { TriAlarmPanel } from '../components/TriAlarmPanel';
 import { AlertHistoryPanel } from '../components/AlertHistoryPanel';
+import { GatewayStatusCard } from '../components/GatewayStatusCard';
 import { BottomNav, NavTab } from '../components/BottomNav';
 import { createVolunteerGroup, updateVolunteerGroup, deleteVolunteerGroup } from '../services/groupService';
 import { createNewUserByHost, updateUserProfile, deleteUserProfile, updateUserGroupAssignment } from '../services/userService';
@@ -366,6 +367,9 @@ export const HostDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* SMS gateway (phone) readiness — is an SMS actually deliverable right now? */}
+            <GatewayStatusCard />
           </div>
         )}
 

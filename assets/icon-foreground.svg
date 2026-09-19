@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!--
+    Adaptive icon foreground layer (transparent).
+    The waveform is kept inside the central 66dp-of-108dp safe zone (626px here)
+    so aggressive launcher masks (circle, squircle, rounded square) cannot clip it.
+  -->
+  <path d="M 240 512 H 372 L 424 414 L 468 622 L 516 250 L 564 744 L 612 420 L 656 574 L 700 512 H 784"
+        fill="none" stroke="#ffffff" stroke-width="76"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
