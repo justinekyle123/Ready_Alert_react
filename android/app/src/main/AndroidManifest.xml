@@ -24,6 +24,13 @@
 
         </activity>
 
+        <!-- Push notification channel used for closed-app emergency alerts.
+             The matching channel is created in code by src/utils/nativePush.ts
+             (EMERGENCY_CHANNEL_ID = readyalert_emergency). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="@string/default_notification_channel_id" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -38,4 +45,10 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Required on Android 13+ (API 33+) to show push notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Emergency sirens/vibration feedback on incoming alerts -->
+    <uses-permission android:name="android.permission.VIBRATE" />
 </manifest>

@@ -10,7 +10,11 @@ Narito ang mapa ng ating buong proyekto:
 
 ```text
 Ready Alert/
-├── firebase-applet-config.json  # Configuration ng Firebase connection
+├── firebase-applet-config.json  # Configuration ng Firebase connection (tingnan ang FIREBASE_SETUP.md)
+├── FIREBASE_SETUP.md             # Gabay sa pag-configure ng Firebase keys, VAPID, at push notifications
+├── firebase.json                 # Firebase CLI config (functions + firestore rules deploy)
+├── functions/                    # Cloud Function na nagpapadala ng FCM push sa lahat ng devices
+│   ├── src/index.ts              # sendAlertPush — tumatakbo tuwing may bagong alert document
 ├── firestore.rules               # Security rules ng ating Firestore database
 ├── package.json                  # Talaan ng npm packages at dependencies
 ├── schema.md                     # Paliwanag sa Database Schema at Entities

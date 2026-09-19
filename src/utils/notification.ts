@@ -1,10 +1,111 @@
 // src/utils/notification.ts
 import { showSuccessToast, showErrorAlert } from './sweetalert';
-import { getFirebaseMessaging, db } from '../config/firebase';
+import { getFirebaseMessaging, db, auth, firebaseConfig } from '../config/firebase';
 import { getToken, onMessage } from 'firebase/messaging';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteField } from 'firebase/firestore';
+import { getStoredLocalUser } from '../services/authService';
+import {
+  isNativePlatform,
+  getNativePlatform,
+  initNativePush,
+  checkNativePushPermission,
+  getStoredNativePermission,
+  setNativePushUser,
+  type NativeAlertPayload
+} from './nativePush';
 
 export type AlertLevelType = 'CRITICAL' | 'WARNING' | 'ADVISORY' | 'NORMAL';
+
+/**
+ * Resolve the active user id (Firebase Auth session first, local profile fallback)
+ */
+const getActiveUid = (): string | null =>
+  auth.currentUser?.uid || getStoredLocalUser()?.uid || null;
+
+/**
+ * Map a raw FCM alert level to the internal audio/notification level
+ */
+const toAlertLevelType = (rawLevel: string): AlertLevelType =>
+  rawLevel === 'RED' || rawLevel === 'CRITICAL'
+    ? 'CRITICAL'
+    : rawLevel === 'YELLOW' || rawLevel === 'WARNING'
+    ? 'WARNING'
+    : 'ADVISORY';
+
+/**
+ * Foreground callback shared by the native and web FCM listeners
+ */
+const handleIncomingAlert = (payload: NativeAlertPayload) => {
+  sendPushNotification(payload.title, payload.body, toAlertLevelType(payload.level));
+};
+
+/**
+ * Every link in the push chain, for the in-app diagnostics panel. A push can only
+ * be delivered when ALL of these are true, so this is what to check first when
+ * nothing arrives on the device.
+ */
+export type PushDiagnostics = {
+  platform: 'web' | 'android' | 'ios';
+  projectId: string;
+  messagingSenderId: string;
+  vapidKeyConfigured: boolean;
+  permission: NotificationPermission | 'unsupported';
+  /** Token saved on users/{uid} — the value the sender pushes to */
+  token: string | null;
+  tokenPlatform: string | null;
+  tokenUpdatedAt: string | null;
+};
+
+export const getPushDiagnostics = async (uid?: string | null): Promise<PushDiagnostics> => {
+  const targetUid = uid || getActiveUid();
+
+  const diagnostics: PushDiagnostics = {
+    platform: isNativePlatform()
+      ? getNativePlatform() === 'android'
+        ? 'android'
+        : 'ios'
+      : 'web',
+    projectId: firebaseConfig.projectId || 'unknown',
+    messagingSenderId: firebaseConfig.messagingSenderId || '',
+    vapidKeyConfigured: Boolean((import.meta as any).env?.VITE_FIREBASE_VAPID_KEY),
+    permission: await syncNotificationPermission(),
+    token: null,
+    tokenPlatform: null,
+    tokenUpdatedAt: null
+  };
+
+  if (!targetUid) return diagnostics;
+
+  try {
+    const snapshot = await getDoc(doc(db, 'users', targetUid));
+    if (snapshot.exists()) {
+      const profile = snapshot.data();
+      diagnostics.token = typeof profile.fcmToken === 'string' ? profile.fcmToken : null;
+      diagnostics.tokenPlatform = typeof profile.fcmPlatform === 'string' ? profile.fcmPlatform : null;
+      diagnostics.tokenUpdatedAt = typeof profile.fcmUpdatedAt === 'string' ? profile.fcmUpdatedAt : null;
+    }
+  } catch (err) {
+    console.warn('Push diagnostics: could not read the token from Firestore:', err);
+  }
+
+  return diagnostics;
+};
+
+/**
+ * Remove this device's push token from a user profile (used on sign-out so a
+ * device stops receiving the previous user's emergency alerts).
+ */
+export const clearFcmToken = async (uid?: string | null): Promise<void> => {
+  const targetUid = uid || getActiveUid();
+  if (!targetUid) return;
+
+  try {
+    await updateDoc(doc(db, 'users', targetUid), { fcmToken: deleteField() });
+    console.log(`FCM token cleared from users/${targetUid}`);
+  } catch (err) {
+    console.warn('Unable to clear FCM token:', err);
+  }
+};
 
 /**
  * Register FCM Messaging Token for Closed-App Remote Push Notifications
@@ -21,6 +122,12 @@ export const registerFcmToken = async (uid: string, vapidKey?: string): Promise<
     console.log('FCM Service Worker registered:', swRegistration.scope);
 
     const effectiveVapidKey = vapidKey || (import.meta as any).env?.VITE_FIREBASE_VAPID_KEY;
+
+    if (!effectiveVapidKey) {
+      console.warn(
+        'Missing VAPID key: set VITE_FIREBASE_VAPID_KEY in .env.local (Firebase Console → Project settings → Cloud Messaging → Web Push certificates) to enable FCM web push. See FIREBASE_SETUP.md.'
+      );
+    }
 
     const token = await getToken(messaging, {
       serviceWorkerRegistration: swRegistration,
@@ -147,6 +254,41 @@ export const initNotificationService = async () => {
       console.warn('SW registration failed:', error);
     }
   }
+
+  // Native (Android / iOS) builds use the Capacitor push plugin, not the Web SDK
+  if (isNativePlatform()) {
+    const uid = getActiveUid();
+    setNativePushUser(uid);
+    if (uid) {
+      // Registers the device and refreshes the token, but never prompts on boot
+      initNativePush(uid, { prompt: false, onForegroundAlert: handleIncomingAlert });
+    }
+    return;
+  }
+
+  // Attach the foreground FCM listener once per app boot
+  listenToFcmMessages();
+
+  // Returning users who already granted permission: refresh the device FCM token
+  if (getNotificationPermission() === 'granted') {
+    const uid = getActiveUid();
+    if (uid) {
+      registerFcmToken(uid);
+    }
+  }
+};
+
+/**
+ * Async permission refresh so the UI can reflect the real OS permission state
+ * (the native plugins keep that state outside the browser Notification API).
+ */
+export const syncNotificationPermission = async (): Promise<NotificationPermission | 'unsupported'> => {
+  if (!isNativePlatform()) return getNotificationPermission();
+
+  const permission = await checkNativePushPermission();
+  if (permission === 'granted') return 'granted';
+  if (permission === 'denied') return 'denied';
+  return 'default';
 };
 
 /**
@@ -154,6 +296,11 @@ export const initNotificationService = async () => {
  */
 export const getNotificationPermission = (): NotificationPermission | 'unsupported' => {
   if (typeof window === 'undefined') return 'unsupported';
+
+  // Native builds: the OS owns the permission state (cached by nativePush.ts)
+  if (isNativePlatform()) {
+    return getStoredNativePermission() ? 'granted' : 'default';
+  }
 
   if ('Notification' in window) {
     return Notification.permission;
@@ -169,6 +316,45 @@ export const getNotificationPermission = (): NotificationPermission | 'unsupport
  */
 export const requestNotificationPermission = async (): Promise<boolean> => {
   const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+
+  // Native (Android / iOS) builds: ask the OS, then register with FCM / APNs
+  if (isNativePlatform()) {
+    const uid = getActiveUid();
+    if (!uid) {
+      showErrorAlert(
+        'Sign In Required',
+        'Please sign in first so this device can be linked to your Ready Alert account for emergency push alerts.'
+      );
+      return false;
+    }
+
+    setNativePushUser(uid);
+    const permission = await initNativePush(uid, {
+      prompt: true,
+      onForegroundAlert: handleIncomingAlert
+    });
+
+    if (permission === 'granted') {
+      localStorage.setItem('readyalert_mobile_notif_enabled', 'true');
+      showSuccessToast('🔔 Push notifications enabled! You will receive alerts even when the app is closed.');
+      playAudioAlarm('ADVISORY');
+      return true;
+    }
+
+    if (permission === 'unsupported') {
+      // WebView fallback: keep in-app sirens + vibration working
+      localStorage.setItem('readyalert_mobile_notif_enabled', 'true');
+      playAudioAlarm('ADVISORY');
+      showSuccessToast('🔔 Mobile Emergency Alerts Active! Loud sirens & vibration enabled for your device.');
+      return true;
+    }
+
+    showErrorAlert(
+      'Notifications Blocked on Device',
+      'Push notifications are turned off for Ready Alert. To fix this:\n1. Open your device Settings → Apps → Ready Alert.\n2. Tap Notifications and turn them ON.\n3. Reopen the app and tap Push Notifications again.'
+    );
+    return false;
+  }
 
   // Support for Android WebView / Debug APK where window.Notification is not exposed natively
   if (!('Notification' in window)) {
@@ -209,6 +395,13 @@ export const requestNotificationPermission = async (): Promise<boolean> => {
         'ADVISORY',
         true
       );
+
+      // Register this device with FCM so alerts can arrive while the app is closed
+      const uid = getActiveUid();
+      if (uid) {
+        registerFcmToken(uid);
+      }
+
       return true;
     } else {
       if (isIframe) {

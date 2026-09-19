@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { RoleBadge } from './RoleBadge';
+import { PushDiagnostics } from './PushDiagnostics';
 import { 
   LogOut, 
   Activity, 
@@ -19,7 +20,8 @@ import {
 import {
   initNotificationService,
   getNotificationPermission,
-  requestNotificationPermission
+  requestNotificationPermission,
+  syncNotificationPermission
 } from '../utils/notification';
 
 export const HeaderBar: React.FC = () => {
@@ -32,6 +34,8 @@ export const HeaderBar: React.FC = () => {
   useEffect(() => {
     initNotificationService();
     setNotifPermission(getNotificationPermission());
+    // Native builds keep the real permission state at OS level — refresh it async
+    syncNotificationPermission().then(setNotifPermission);
   }, []);
 
   const handleToggleNotif = async () => {
@@ -40,7 +44,7 @@ export const HeaderBar: React.FC = () => {
       if (success) {
         setNotifPermission('granted');
       } else {
-        setNotifPermission(getNotificationPermission());
+        setNotifPermission(await syncNotificationPermission());
       }
     }
   };
@@ -265,6 +269,9 @@ export const HeaderBar: React.FC = () => {
                 </button>
               </div>
             </div>
+
+            {/* Push troubleshooting helper */}
+            <PushDiagnostics />
 
             <button
               onClick={() => setShowProfileModal(false)}

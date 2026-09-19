@@ -176,6 +176,55 @@ Isang pangkalahatang buod ng mga huling naisagawang update at feature para sa **
 - **Alert History Page Card Text Contrast Fix:**
   - Pinalitan sa `AlertHistoryPanel.tsx` ang hardcoded dark background (`bg-[#0f131c]`) ng adaptableng `bg-slate-900` at `text-white` ng `text-slate-100`. Sa Light Mode, ang mga alert history cards ay awtomatikong nagiging malinis na puting surface card na may high-contrast dark slate text.
 
+---
+
+### 19. Native Push Notifications para sa Android & iOS Builds 📲🔔
+- **Capacitor Plugin Integration:**
+  - Naidagdag ang `@capacitor/push-notifications@8.1.2` at naka-register na sa parehong native projects (`android/capacitor.settings.gradle`, `android/app/capacitor.build.gradle`, at `ios/App/CapApp-SPM/Package.swift`) sa pamamagitan ng `npx cap sync`.
+- **Bagong Native Push Module (`src/utils/nativePush.ts`):**
+  - `initNativePush()` — hinihingi ang pahintulot ng **OS** (hindi ng browser), ginagawa ang Android notification channel, at ini-rehistro ang device sa FCM (Android) o APNs (iOS).
+  - Awtomatikong naka-save ang token sa `users/{uid}` (`fcmToken`, `fcmPlatform`, `fcmUpdatedAt`) para magamit ng sender sa oras ng sakuna.
+  - May `pushNotificationReceived` listener para manatiling tumutunog ang emergency siren at vibration kahit bukas ang app.
+- **Platform Router sa `src/utils/notification.ts`:**
+  - Kung native ang device, dumadaan sa plugin; kung browser, nananatili ang dating Web FCM + Service Worker flow — walang nasirang existing behavior.
+  - Hindi na nag-o-prompt ng permission sa bawat app boot (`prompt: false`) — sa **Push Notifications** button o first-run modal na lang mangyayari ang paghingi ng pahintulot.
+- **Device Detachment sa Sign-Out:**
+  - Nililinis ng `clearFcmToken()` ang token sa sign-out upang hindi na makatanggap ng alerts ang susunod na gagamit ng parehong telepono.
+- **Android Manifest & Channel:**
+  - Naidagdag ang `POST_NOTIFICATIONS` (kailangan sa Android 13+) at `VIBRATE` permissions, kasama ang `default_notification_channel_id` meta-data para sa high-importance na **Emergency Alerts** channel.
+- **iOS APNs Delegate:**
+  - Idinagdag sa `AppDelegate.swift` ang `didRegisterForRemoteNotificationsWithDeviceToken` at `didFailToRegisterForRemoteNotificationsWithError` forwarding na kailangan ng plugin.
+- **Buong Gabay:** Nasa `FIREBASE_SETUP.md` ang sunod-sunod na instructions (Firebase project, VAPID key, `google-services.json`, APNs, at ang sender/Cloud Function).
+
+---
+
+### 20. Cloud Function FCM Sender — Closed-App Push sa Web, Android, at iOS 📡🚨
+- **Bagong `functions/` Package (TypeScript, Node 22):**
+  - Nilikha ang `functions/src/index.ts` na may `sendAlertPush` — isang **Firestore trigger** (`onDocumentCreated` sa `alerts/{alertId}`) na awtomatikong nagpapadala ng push sa lahat ng naka-rehistrong device tuwing may bagong Tri-Alarm broadcast.
+- **Isa Lang ang Tawag, Tatlong Platform:**
+  - Isang `sendEachForMulticast` na tawag ang sumasakop sa **web** (`webpush`, `Urgency: high`), **Android** (`android`, high priority + `readyalert_emergency` channel), at **iOS** (`apns`, priority 10).
+  - Kasama sa payload ang `notification` (para lumitaw kahit sarado ang app) at `data` (para sa siren, vibration, at alert banner sa loob ng app).
+- **Tama ang Sakop ng Padadalhan:**
+  - Kung `GLOBAL_ALL` ang alert, lahat ng user ang matatanggap; kung may `groupId`, ang grupong iyon lang — kapareho ng filter ng `useActiveAlert.ts` sa client.
+  - Hindi na pinapadala ang mga alert na `active: false`, at hindi na nadodoble ang push sa isang device kahit maraming profile ang naka-save dito.
+- **Batching at Token Cleanup:**
+  - Hinahati sa 500 tokens bawat tawag (limitasyon ng FCM) at awtomatikong tinatanggal ang `fcmToken` sa profile kapag sinabing invalid o unregistered na ito ng FCM — pero hindi kung may mas bago nang token na naka-save.
+- **Deploy Setup:**
+  - Naidagdag ang `firebase.json` (functions source + predeploy build + `firestore.rules`) at `functions/.gitignore`. Isang `firebase deploy --only functions` lang ang kailangan, pero dapat i-set ang `REGION` sa parehong lokasyon ng Firestore database, at kailangan ng **Blaze plan** (FCM mismo ay libre sa Spark).
+
+---
+
+### 21. In-App Push Diagnostics & Config Fix 🔍📲
+- **Bagong `PushDiagnostics.tsx` Component:**
+  - Makikita na ngayon sa loob ng **My Account & Profile** modal ang buong push chain: Firebase project ID, sender ID, permission state, kung may naka-save na device token, kung anong platform ang nag-save nito, at kung naka-set ang VAPID key — para hindi na kailangang mag-hula kung bakit walang dumarating na push.
+  - May **Copy** button para sa FCM token (madaling i-paste sa Firebase Console → Messaging → Send test message) at **Re-register this device** button para ulit-ulitin ang permission + token registration.
+- **Open Graph–style status indicators:**
+  - Berde ang check icon kapag ok ang bawat hakbang, pula kapag kulang — kasama ang paalala kapag wala pang token sa device.
+- **Naka-export na `firebaseConfig`:**
+  - Mula sa `src/config/firebase.ts` na ginagamit na ng diagnostics panel at ng `getPushDiagnostics()` sa `notification.ts`.
+- **Naayos ang 404 sa Firebase config ng Service Worker:**
+  - Dinagdag sa `vite.config.ts` ang isang maliit na plugin na nagsi-serve at naglalabas ng `/firebase-applet-config.json` mula sa project root, dahil dati ay hindi ito makita ng `public/firebase-messaging-sw.js` (404) kaya hindi gumagana ang background push sa web.
+
 
 
 

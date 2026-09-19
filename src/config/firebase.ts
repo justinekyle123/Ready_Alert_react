@@ -5,7 +5,7 @@ import { getFirestore } from 'firebase/firestore';
 import { getMessaging, isSupported } from 'firebase/messaging';
 import firebaseConfigData from '../../firebase-applet-config.json';
 
-const firebaseConfig = firebaseConfigData;
+export const firebaseConfig = firebaseConfigData;
 
 // Initialize Firebase app singleton
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();

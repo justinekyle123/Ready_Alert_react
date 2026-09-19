@@ -11,6 +11,7 @@ import {
   getStoredLocalUser 
 } from '../services/authService';
 import { UserProfile, UserRole, EmergencyStatus } from '../@types';
+import { clearFcmToken } from '../utils/notification';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -114,6 +115,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const logout = async (): Promise<void> => {
+    // Detach this device from the account first so it stops receiving
+    // the previous user's emergency push alerts.
+    if (userProfile) {
+      await clearFcmToken(userProfile.uid);
+    }
+
     await logoutUser();
     setUserProfile(null);
     setCurrentUser(null);
