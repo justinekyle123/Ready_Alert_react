@@ -4,6 +4,15 @@
 // which is required for `declare global` to augment the global scope.
 
 declare global {
+  interface ImportMetaEnv {
+    readonly VITE_SMS_API_URL?: string;
+    readonly VITE_SMS_API_KEY?: string;
+  }
+
+  interface ImportMeta {
+    readonly env: ImportMetaEnv;
+  }
+
   /**
    * Whether `android/app/google-services.json` existed when this bundle was built.
    *

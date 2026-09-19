@@ -5,12 +5,51 @@ import {
   setDoc, 
   updateDoc, 
   getDocs, 
-  query, 
+  query,
   where,
-  orderBy 
 } from 'firebase/firestore';
 import { db } from '../config/firebase';
 import { Alert, AlertLevel, UserRole } from '../@types';
+import { sendAlertSms } from './smsService';
+
+const GLOBAL_SCOPE = 'GLOBAL_ALL';
+
+const sendSmsForAlert = async (alert: Alert): Promise<void> => {
+  try {
+    const usersRef = collection(db, 'users');
+    const usersQuery = alert.groupId && alert.groupId !== GLOBAL_SCOPE
+      ? query(usersRef, where('groupId', '==', alert.groupId))
+      : query(usersRef);
+    const snapshot = await getDocs(usersQuery);
+    const numbers = snapshot.docs
+      .map((userDoc) => userDoc.data().contactNumber)
+      .filter((number): number is string => typeof number === 'string' && number.trim().length > 0);
+    const smsResult = await sendAlertSms({ message: alert.message, numbers });
+    await updateDoc(doc(db, 'alerts', alert.alertId), {
+      smsSummary: {
+        status: smsResult.success ? 'sent' : 'failed',
+        sent: smsResult.sent ?? 0,
+        failed: smsResult.failed ?? numbers.length,
+        provider: 'hosted-php-sms-api',
+        messageId: smsResult.messageId ?? null,
+        error: smsResult.error ?? null,
+        completedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    console.error('SMS alert failed after the alert was created:', error);
+    await updateDoc(doc(db, 'alerts', alert.alertId), {
+      smsSummary: {
+        status: 'failed',
+        sent: 0,
+        failed: 0,
+        provider: 'hosted-php-sms-api',
+        error: error instanceof Error ? error.message : 'SMS request failed.',
+        completedAt: new Date().toISOString(),
+      },
+    });
+  }
+};
 
 export const transmitTriAlarmAlert = async (params: {
   alertLevel: AlertLevel;
@@ -41,6 +80,7 @@ export const transmitTriAlarmAlert = async (params: {
   };
 
   await setDoc(newAlertRef, alertData);
+  void sendSmsForAlert(alertData);
   return alertData;
 };
 
