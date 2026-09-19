@@ -7,8 +7,9 @@ Dokumento ukol sa **Firebase Configuration**, **Entities**, **Attributes**, at *
 ## 1. Firebase Project & Database Details
 
 * **Applet Name:** Ready Alert
-* **Firebase Project ID:** `ninth-theme-vjkjx`
-* **Firestore Database ID:** `ai-studio-readyalert-de20df8c-54e7-4bd3-9b13-17c47fd29c17`
+* **Firebase Project ID:** `readyalert-7c4bb`
+* **Firestore Database ID:** `(default)`
+* **Cloud Messaging Sender ID:** `408995423101`
 * **Authentication Provider:** Firebase Auth / Firestore Secured User Store
 * **Configuration File:** `firebase-applet-config.json`
 
