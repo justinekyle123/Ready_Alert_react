@@ -16,7 +16,32 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Stable debug signing key (checked into the repo on purpose).
+    //
+    // Without this, Gradle falls back to ~/.android/debug.keystore, which does not
+    // exist on a fresh GitHub Actions runner, so the Android plugin generates a NEW
+    // one — with a random key — on every single run. Each build then has a different
+    // signature, and Android refuses to update an installed app with an APK signed by
+    // another key: the install fails with the generic "App not installed".
+    // Pinning this keystore makes CI builds and local builds identical and updatable.
+    //
+    // It is a DEBUG key only. It cannot publish to Google Play and is not a secret in
+    // any meaningful sense — release builds must use a separate keystore supplied
+    // through GitHub Secrets / env vars.
+    signingConfigs {
+        debug {
+            storeFile file('debug-ci.keystore')
+            storeType 'pkcs12'
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

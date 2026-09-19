@@ -22,7 +22,11 @@ import {
   type SendResponse,
 } from 'firebase-admin/messaging';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
+import { probeGateway } from './gateway';
 
 initializeApp();
 
@@ -43,6 +47,23 @@ const GLOBAL_SCOPE = 'GLOBAL_ALL';
 
 /** FCM rejects multicast batches larger than 500 tokens */
 const MULTICAST_LIMIT = 500;
+
+/**
+ * SMS gateway credentials (SMS Gateway for Android — see SMS_PLAN.md).
+ * Set with:
+ *   firebase functions:secrets:set ANDROID_SMS_GATEWAY_LOGIN
+ *   firebase functions:secrets:set ANDROID_SMS_GATEWAY_PASSWORD
+ * Never commit these — they can send SMS from your SIM.
+ */
+const GATEWAY_LOGIN = defineSecret('ANDROID_SMS_GATEWAY_LOGIN');
+const GATEWAY_PASSWORD = defineSecret('ANDROID_SMS_GATEWAY_PASSWORD');
+
+/** Firestore document the app subscribes to for gateway status */
+const GATEWAY_HEALTH_COLLECTION = 'system';
+const GATEWAY_HEALTH_DOC_ID = 'gatewayHealth';
+
+const writeGatewayHealth = (health: Awaited<ReturnType<typeof probeGateway>>) =>
+  db.collection(GATEWAY_HEALTH_COLLECTION).doc(GATEWAY_HEALTH_DOC_ID).set(health);
 
 /** Errors that mean the token is dead and should be removed from Firestore */
 const STALE_TOKEN_CODES = new Set([
@@ -221,6 +242,57 @@ const pruneStaleTokens = async (
     logger.info(`Removed ${cleared} stale FCM token(s).`);
   }
 };
+
+/**
+ * Heartbeat so the app always has a reasonably fresh gateway status, even if
+ * nobody has opened it. Writes `system/gatewayHealth`, which the client reads
+ * in real time via useGatewayHealth().
+ */
+export const monitorGatewayHealth = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    region: REGION,
+    secrets: [GATEWAY_LOGIN, GATEWAY_PASSWORD],
+  },
+  async () => {
+    const health = await probeGateway({
+      source: 'scheduled',
+      login: GATEWAY_LOGIN.value(),
+      password: GATEWAY_PASSWORD.value(),
+    });
+
+    await writeGatewayHealth(health);
+
+    if (health.status === 'online' || health.status === 'degraded') {
+      logger.info(`SMS gateway ${health.status} — ${health.onlineDeviceCount} device(s) online.`);
+    } else {
+      logger.warn(`SMS gateway ${health.status}: ${health.error}`);
+    }
+  },
+);
+
+/**
+ * On-demand probe for the "Check now" button. Requires a signed-in user and
+ * refreshes the same Firestore document, so every client updates at once.
+ */
+export const checkGatewayHealth = onCall(
+  { region: REGION, secrets: [GATEWAY_LOGIN, GATEWAY_PASSWORD] },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Sign in to check the SMS gateway status.');
+    }
+
+    const health = await probeGateway({
+      source: 'manual',
+      login: GATEWAY_LOGIN.value(),
+      password: GATEWAY_PASSWORD.value(),
+    });
+
+    await writeGatewayHealth(health);
+
+    return health;
+  },
+);
 
 export const sendAlertPush = onDocumentCreated(
   { document: 'alerts/{alertId}', region: REGION },

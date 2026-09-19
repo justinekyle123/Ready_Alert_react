@@ -2,7 +2,8 @@
 import React, { useState } from 'react';
 import { AlertLevel, UserRole } from '../@types';
 import { transmitTriAlarmAlert, transmitBackupAlert } from '../services/alertService';
-import { Radio, AlertOctagon, AlertTriangle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { useGatewayHealth } from '../hooks/useGatewayHealth';
+import { Radio, AlertOctagon, AlertTriangle, CheckCircle2, ShieldAlert, SignalHigh, SignalZero } from 'lucide-react';
 
 interface TriAlarmPanelProps {
   userRole: UserRole;
@@ -24,6 +25,11 @@ export const TriAlarmPanel: React.FC<TriAlarmPanelProps> = ({
   const [transmitting, setTransmitting] = useState<boolean>(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // SMS gateway (phone) readiness — shown next to the send button so the sender
+  // knows whether text alerts can actually go out. See SMS_PLAN.md.
+  const { health: gatewayHealth, loading: gatewayLoading } = useGatewayHealth();
+  const gatewayOnline = gatewayHealth?.status === 'online' || gatewayHealth?.status === 'degraded';
 
   const defaultMessages: Record<AlertLevel, string> = {
     RED: 'EARTHQUAKE SHAKING DETECTED! Drop, Cover, and Hold On immediately! Report status when safe.',
@@ -158,6 +164,34 @@ export const TriAlarmPanel: React.FC<TriAlarmPanelProps> = ({
         <div className="text-[10px] text-slate-400 italic truncate">
           Default: "{defaultMessages[selectedLevel]}"
         </div>
+      </div>
+
+      {/* SMS gateway readiness strip */}
+      <div className="flex items-center justify-between gap-2 px-1 text-[10px] font-semibold">
+        <span className="flex items-center gap-1.5 text-slate-400">
+          {gatewayLoading ? (
+            <SignalHigh className="w-3.5 h-3.5 text-slate-500 animate-pulse" />
+          ) : gatewayOnline ? (
+            <SignalHigh className="w-3.5 h-3.5 text-emerald-400" />
+          ) : (
+            <SignalZero className="w-3.5 h-3.5 text-red-400" />
+          )}
+          <span>
+            SMS gateway:{' '}
+            <span className={gatewayLoading ? 'text-slate-400' : gatewayOnline ? 'text-emerald-300' : 'text-red-300'}>
+              {gatewayLoading
+                ? 'checking…'
+                : gatewayOnline
+                ? gatewayHealth?.status
+                : gatewayHealth?.status === 'unconfigured'
+                ? 'not set up'
+                : 'offline'}
+            </span>
+          </span>
+        </span>
+        {!gatewayLoading && !gatewayOnline && (
+          <span className="text-slate-500 font-normal">push alerts only</span>
+        )}
       </div>
 
       {/* Wireframe Bottom Button: Pill / Stadium Shape "Send Alert" */}

@@ -2,6 +2,7 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getFunctions } from 'firebase/functions';
 import { getMessaging, isSupported } from 'firebase/messaging';
 import firebaseConfigData from '../../firebase-applet-config.json';
 
@@ -19,6 +20,15 @@ const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatab
   : undefined;
 
 export const db = dbId ? getFirestore(app, dbId) : getFirestore(app);
+
+/**
+ * Cloud Functions region. MUST match REGION in functions/src/index.ts,
+ * otherwise callable functions cannot be invoked from the client.
+ */
+export const FUNCTIONS_REGION = 'us-central1';
+
+// Initialize Cloud Functions (callables such as checkGatewayHealth)
+export const functions = getFunctions(app, FUNCTIONS_REGION);
 
 // Initialize Firebase Messaging dynamically if supported in runtime environment
 export const getFirebaseMessaging = async () => {
