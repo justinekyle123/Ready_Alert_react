@@ -50,6 +50,49 @@ export const isNativePlatform = (): boolean => Capacitor.isNativePlatform();
 
 export const getNativePlatform = (): string => Capacitor.getPlatform();
 
+/**
+ * Whether the Android build had `android/app/google-services.json` at build time.
+ *
+ * Without that file `android/app/build.gradle` does not apply the Google Services
+ * plugin, so no FirebaseApp is initialized. `PushNotifications.register()` then calls
+ * `FirebaseMessaging.getInstance()` as its first statement on the main thread, which
+ * throws and takes the whole process down — the user just sees the app close.
+ *
+ * Defaults to `true` when the constant was not injected, so only an explicit `false`
+ * disables the native path.
+ */
+const ANDROID_FIREBASE_CONFIGURED: boolean =
+  typeof __ANDROID_FIREBASE_CONFIGURED__ === 'undefined'
+    ? true
+    : __ANDROID_FIREBASE_CONFIGURED__ !== false;
+
+/**
+ * False only for Android builds without a native Firebase config, where any call that
+ * touches FirebaseMessaging would crash the process. iOS is unaffected: the Capacitor
+ * plugin uses APNs there, not Firebase.
+ */
+export const isNativePushUsable = (): boolean =>
+  !(getNativePlatform() === 'android' && !ANDROID_FIREBASE_CONFIGURED);
+
+let warnedMissingAndroidConfig = false;
+
+/**
+ * Logged once per session. On a physical phone there is no console, so the same reason
+ * is also surfaced in the Push Diagnostics panel (see PushDiagnostics.tsx).
+ */
+const warnMissingAndroidConfig = () => {
+  if (warnedMissingAndroidConfig) return;
+  warnedMissingAndroidConfig = true;
+  console.error(
+    'Native push disabled: android/app/google-services.json was missing when this app was built, ' +
+      'so the Google Services plugin did not run and FirebaseApp is not initialized. Calling ' +
+      'PushNotifications.register() in that state kills the app, so native push is skipped. ' +
+      'Fix: Firebase Console → Project settings → Your apps → Android app (package name ' +
+      'com.example.app) → download google-services.json → save to android/app/ → rebuild. ' +
+      'See FIREBASE_SETUP.md.'
+  );
+};
+
 /** Sync read of the cached native permission state (for UI rendering) */
 export const getStoredNativePermission = (): boolean => {
   try {
@@ -73,6 +116,12 @@ const setStoredNativePermission = (granted: boolean) => {
  */
 export const checkNativePushPermission = async (): Promise<NativePushPermission> => {
   if (!isNativePlatform()) return 'unsupported';
+
+  if (!isNativePushUsable()) {
+    warnMissingAndroidConfig();
+    setStoredNativePermission(false);
+    return 'unsupported';
+  }
 
   try {
     const status = await PushNotifications.checkPermissions();
@@ -187,6 +236,12 @@ export const initNativePush = async (
   options: NativePushOptions = {}
 ): Promise<NativePushPermission> => {
   if (!isNativePlatform()) return 'unsupported';
+
+  // Must run before attachListeners()/register(): `register` is the call that throws.
+  if (!isNativePushUsable()) {
+    warnMissingAndroidConfig();
+    return 'unsupported';
+  }
 
   currentUid = uid;
   if (options.onForegroundAlert) {
