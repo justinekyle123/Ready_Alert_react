@@ -13,6 +13,23 @@ jobs:
     - name: Checkout Source Code
       uses: actions/checkout@v4
 
+    # android/app/build.gradle applies the Google Services plugin ONLY when this file
+    # exists. Without it no FirebaseApp is initialized on Android, so native push is
+    # unavailable and the JS side disables it (see vite.config.ts / nativePush.ts).
+    # This is a warning, not a failure — the APK still builds and runs.
+    - name: Check native Firebase config
+      run: |
+        if [ -f android/app/google-services.json ]; then
+          echo "### ✅ google-services.json present — Android push enabled" >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "### ⚠️ google-services.json MISSING — Android push disabled" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "This APK will skip native push notifications. To enable them: Firebase Console →" >> "$GITHUB_STEP_SUMMARY"
+          echo "Project settings → Your apps → Android app (package \`com.example.app\`) → download" >> "$GITHUB_STEP_SUMMARY"
+          echo "google-services.json → save to \`android/app/google-services.json\` → rebuild." >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=Android push disabled::android/app/google-services.json is missing, so native push is disabled in this APK."
+        fi
+
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:

@@ -42,8 +42,25 @@ const firebaseConfigFile = (): Plugin => ({
   },
 });
 
+/**
+ * True when `android/app/google-services.json` exists at build time.
+ *
+ * `android/app/build.gradle` applies the `com.google.gms.google-services` plugin ONLY
+ * if that file is present. Without it no FirebaseApp is initialized, and the Capacitor
+ * push plugin's `register()` calls `FirebaseMessaging.getInstance()` as its first
+ * statement — which throws IllegalStateException on the main thread and kills the
+ * process. Injecting the answer into the bundle lets `src/utils/nativePush.ts` skip
+ * native push entirely instead of crashing on every dashboard load.
+ */
+const androidFirebaseConfigured = fs.existsSync(
+  path.resolve(__dirname, 'android/app/google-services.json')
+);
+
 export default defineConfig(() => {
   return {
+    define: {
+      __ANDROID_FIREBASE_CONFIGURED__: JSON.stringify(androidFirebaseConfigured),
+    },
     plugins: [firebaseConfigFile(), react(), tailwindcss()],
     resolve: {
       alias: {

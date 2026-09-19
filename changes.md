@@ -267,6 +267,30 @@ Isang pangkalahatang buod ng mga huling naisagawang update at feature para sa **
 - **Isang Beses Lang na Hakbang:**
   - Dahil luma pa ang key na nasa telepono, **i-uninstall muna ang app** bago i-install ang bagong APK. Pagkatapos nito, diretso nang nag-u-update ang mga susunod na build.
 
+---
+
+### 25. Naayos ang pag-sara ng app pagkatapos mag-login (native push crash) 💥📵
+- **Ang Sintomas:**
+  - Nakakapag-login nang maayos, pero sa sandaling lumipat sa dashboard, **nagsasara agad ang app** — paulit-ulit.
+- **Ang Tunay na Sanhi (hindi ang icon o config):**
+  - Wala ang `android/app/google-services.json`, kaya **hindi inilalapat** ng `android/app/build.gradle` ang `com.google.gms.google-services` plugin (may `try/catch` ito sa linya 72–79 na tahimik na lumalaktaw). Kapag wala ang plugin, **walang `FirebaseApp`** na naka-initialize.
+  - Ang unang linya ng `register()` sa Capacitor push plugin ay `FirebaseMessaging.getInstance()` — **synchronous, sa main thread**. Walang `FirebaseApp`, nag-throw ito ng `IllegalStateException` at namamatay ang buong process. Kaya "app closed", hindi white screen.
+  - Bakit nagsisimula lang ngayon: idinagdag ng native push integration ang boot call na `initNativePush(uid, { prompt: false })` sa `notification.ts`. Ayon sa plugin docs, **sa Android 12 pababa ay laging `granted`** ang permission — kaya direktang tumatakbo ang `register()` sa bawat pag-login. Sa Android 13+, nangyayari ito sa unang pag-tap ng "Allow".
+- **Ang Ayos (nasa build ang desisyon, hindi sa runtime):**
+  - May bagong build-time constant na `__ANDROID_FIREBASE_CONFIGURED__` na ini-inject ng Vite `define` sa `vite.config.ts` — `true` lang kung umiiral ang `android/app/google-services.json` habang nagbi-build. Idineklara ito sa bagong `src/env.d.ts`.
+  - Sa `src/utils/nativePush.ts`, may `isNativePushUsable()` na gate bago ang **lahat** ng native push calls. Kapag Android na walang Firebase config, bumabalik ito agad ng `'unsupported'` — **hindi na naaabot ang `register()`**, kaya imposible nang mag-crash. Nag-log din ng malinaw na paliwanag nang isang beses.
+  - Hindi ito basta try/catch: native crash sa main thread ang pinag-uusapan, kaya **pigtail** ang tamang solusyon — hindi basta pag-catch ng error.
+  - Gumagana pa rin ang fallback: dahil `'unsupported'` ang ibinabalik, patuloy na gumagana ang in-app sirena at vibration (dating WebView fallback path).
+- **Verification:**
+  - **Walang file (kasalukuyang state):** naging `IB=()=>nh()!=="android"` sa bundle — ibig sabihin, nilalaktawan ang push sa Android. ✅
+  - **May file:** naging `IB=()=>!(nh()==="android"&&!1)` — laging `true`, tuloy ang push. ✅
+  - Kumpirmadong naipasok ang value (0 natitirang `__ANDROID_FIREBASE_CONFIGURED__` token sa bundle), at `npm run build` + `npm run lint` ay pasado (2 pre-existing na `HostDashboard.tsx` error lang ang natitira).
+- **Nakikita na sa App:**
+  - Bagong row na **"Android Firebase config"** sa `PushDiagnostics` panel (avatar → My Account & Profile) at pulang callout na nagpapaliwanag ng dahilan — mahalaga ito dahil **walang console sa telepono**.
+  - Sa GitHub Actions, may bagong step na `Check native Firebase config` na naglalagay ng ✅/⚠️ sa Step Summary bago pa mag-build.
+- **Kailangan Mong Gawin:**
+  - I-download ang `google-services.json` (Firebase Console → Project settings → Your apps → Android app, package `com.example.app`) → ilagay sa `android/app/google-services.json` → i-commit → rebuild. Babalik agad ang native push pagkatapos nito, walang code change.
+
 
 
 

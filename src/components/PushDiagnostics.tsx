@@ -16,6 +16,7 @@ import {
   type PushDiagnostics as PushDiagnosticsData
 } from '../utils/notification';
 import { showSuccessToast, showErrorAlert } from '../utils/sweetalert';
+import { isNativePushUsable } from '../utils/nativePush';
 
 /**
  * Push troubleshooting helper shown inside the Account & Profile modal.
@@ -140,7 +141,30 @@ export const PushDiagnostics: React.FC = () => {
           label="App platform"
           detail={diagnostics?.platform || '—'}
         />
+        {diagnostics?.platform !== 'web' && (
+          <StatusRow
+            ok={isNativePushUsable()}
+            label="Android Firebase config"
+            detail={
+              isNativePushUsable() ? 'google-services.json present' : 'missing — native push disabled'
+            }
+          />
+        )}
       </div>
+
+      {!isNativePushUsable() && (
+        <div className="p-2.5 bg-rose-950/50 border border-rose-800/80 rounded-xl text-[10px] text-rose-200 flex items-start gap-1.5">
+          <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+          <span>
+            Native push is disabled on this build.{' '}
+            <strong>android/app/google-services.json</strong> was missing when the app was compiled,
+            so Android has no Firebase configuration and registering a device would crash the app.
+            Add the file (Firebase Console → Project settings → Your apps → Android app, package{' '}
+            <code>com.example.app</code>), rebuild, then reinstall. In-app sirens and vibration still
+            work.
+          </span>
+        </div>
+      )}
 
       {hasToken && (
         <div className="space-y-1.5 pt-1">
