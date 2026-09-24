@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, AlertLevel } from '../@types';
 import { AlertTriangle, ShieldAlert, Bell, XCircle } from 'lucide-react';
 import { resolveAlert } from '../services/alertService';
+import { playAlarmForAlert, AlertLevelType } from '../utils/notification';
 
 interface AlertBannerProps {
   alert: Alert | null;
@@ -12,25 +13,16 @@ interface AlertBannerProps {
 export const AlertBanner: React.FC<AlertBannerProps> = ({ alert, userRole }) => {
   const [resolving, setResolving] = useState(false);
 
-  // Play audio alert pulse when new high severity alert arrives
+  // Sound the same siren the transmitter hears whenever a new active alarm
+  // appears on this (receiver) device. playAlarmForAlert dedupes by alert id, so
+  // whichever path observes the alert first plays it once — this banner is a
+  // reliable fallback if the real-time listener or FCM handler is unavailable.
   useEffect(() => {
-    if (alert && alert.active && (alert.alertLevel === 'RED' || alert.alertLevel === 'YELLOW')) {
-      try {
-        const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = alert.alertLevel === 'RED' ? 'sawtooth' : 'sine';
-        osc.frequency.setValueAtTime(alert.alertLevel === 'RED' ? 880 : 587.33, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.6);
-      } catch (e) {
-        // AudioContext may require user gesture on web
-      }
-    }
-  }, [alert?.alertId, alert?.alertLevel]);
+    if (!alert || !alert.active) return;
+    const level: AlertLevelType =
+      alert.alertLevel === 'RED' ? 'CRITICAL' : alert.alertLevel === 'YELLOW' ? 'WARNING' : 'ADVISORY';
+    playAlarmForAlert(alert.alertId, level);
+  }, [alert?.alertId, alert?.alertLevel, alert?.active]);
 
   const handleResolve = async () => {
     if (!alert) return;

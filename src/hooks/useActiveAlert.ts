@@ -57,7 +57,9 @@ export const useActiveAlert = (groupId?: string) => {
               sendPushNotification(
                 levelTitle,
                 alert.message || 'New earthquake alert issued.',
-                mappedLevel
+                mappedLevel,
+                false,
+                alert.alertId
               );
             }
           }

@@ -51,6 +51,46 @@ const sendSmsForAlert = async (alert: Alert): Promise<void> => {
   }
 };
 
+/**
+ * End every alarm still marked active in the same viewing scope so only ONE alarm
+ * is ever live. Without this a second transmit leaves the previous alarm active,
+ * so the two overlap in the banner, the alert log, and on every receiver.
+ *
+ * A global (GLOBAL_ALL) alarm supersedes everything; a group alarm supersedes its
+ * own group plus any global alarm the group is following. The alarm that was just
+ * created is skipped by id.
+ */
+const resolveActiveAlertsInScope = async (
+  scopeGroupId: string,
+  exceptAlertId: string
+): Promise<void> => {
+  const activeSnapshot = await getDocs(query(collection(db, 'alerts'), where('active', '==', true)));
+  const resolvedAt = new Date().toISOString();
+
+  const updates = activeSnapshot.docs
+    .filter((docSnap) => {
+      if (docSnap.id === exceptAlertId) return false;
+      const groupId = docSnap.data().groupId as string | undefined;
+      return (
+        scopeGroupId === GLOBAL_SCOPE ||
+        groupId === scopeGroupId ||
+        groupId === GLOBAL_SCOPE
+      );
+    })
+    .map((docSnap) =>
+      updateDoc(docSnap.ref, {
+        active: false,
+        resolvedAt,
+        resolvedReason: 'superseded'
+      })
+    );
+
+  if (updates.length > 0) {
+    await Promise.all(updates);
+    console.log(`Ended ${updates.length} previous alarm(s) superseded by the new broadcast.`);
+  }
+};
+
 export const transmitTriAlarmAlert = async (params: {
   alertLevel: AlertLevel;
   message: string;
@@ -80,6 +120,16 @@ export const transmitTriAlarmAlert = async (params: {
   };
 
   await setDoc(newAlertRef, alertData);
+
+  // A new broadcast replaces whatever alarm was live before it. Run after the
+  // new alert exists so receivers briefly see the newest one, but never let a
+  // failure here lose the freshly transmitted alarm.
+  try {
+    await resolveActiveAlertsInScope(alertData.groupId, alertData.alertId);
+  } catch (err) {
+    console.error('Unable to end the previous alarm:', err);
+  }
+
   void sendSmsForAlert(alertData);
   return alertData;
 };
