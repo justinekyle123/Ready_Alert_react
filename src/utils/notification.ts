@@ -36,7 +36,13 @@ const toAlertLevelType = (rawLevel: string): AlertLevelType =>
  * Foreground callback shared by the native and web FCM listeners
  */
 const handleIncomingAlert = (payload: NativeAlertPayload) => {
-  sendPushNotification(payload.title, payload.body, toAlertLevelType(payload.level));
+  sendPushNotification(
+    payload.title,
+    payload.body,
+    toAlertLevelType(payload.level),
+    false,
+    payload.data?.alertId
+  );
 };
 
 /**
@@ -167,7 +173,7 @@ export const listenToFcmMessages = async () => {
       const body = payload.notification?.body || payload.data?.body || 'New earthquake alert broadcast.';
       const level = (payload.data?.alertLevel as AlertLevelType) || 'CRITICAL';
 
-      sendPushNotification(title, body, level);
+      sendPushNotification(title, body, level, false, payload.data?.alertId);
     });
   } catch (err) {
     console.warn('Error setting FCM message listener:', err);
@@ -175,71 +181,192 @@ export const listenToFcmMessages = async () => {
 };
 
 
+const getAudioContextClass = (): typeof AudioContext | undefined =>
+  window.AudioContext || (window as any).webkitAudioContext;
+
+/**
+ * One shared AudioContext for every alarm. Browsers keep a context suspended
+ * until the page has seen a user gesture, so the receiver's first tap primes it
+ * here and every later siren can play without asking again. Sharing one context
+ * also avoids leaking a new one per alert.
+ */
+let sharedAudioCtx: AudioContext | null = null;
+
+const getSharedAudioContext = (): AudioContext | null => {
+  const AudioContextClass = getAudioContextClass();
+  if (!AudioContextClass) return null;
+
+  if (!sharedAudioCtx) {
+    try {
+      sharedAudioCtx = new AudioContextClass();
+    } catch (err) {
+      console.warn('Unable to create AudioContext:', err);
+      return null;
+    }
+  }
+
+  // Resume on every call: the context can be auto-suspended again while idle.
+  if (sharedAudioCtx.state === 'suspended') {
+    void sharedAudioCtx.resume().catch(() => {});
+  }
+
+  return sharedAudioCtx;
+};
+
+let audioUnlockAttached = false;
+
+/**
+ * Prime the shared AudioContext on the receiver's first interaction so an
+ * incoming alert siren is not silently blocked by the browser autoplay policy.
+ * Call once at app startup; repeated calls are ignored.
+ */
+export const initAudioUnlock = () => {
+  if (audioUnlockAttached || typeof window === 'undefined') return;
+  audioUnlockAttached = true;
+
+  const unlock = () => {
+    const ctx = getSharedAudioContext();
+    if (ctx?.state === 'suspended') void ctx.resume().catch(() => {});
+  };
+
+  (['pointerdown', 'touchstart', 'keydown'] as const).forEach((evt) =>
+    window.addEventListener(evt, unlock, { passive: true })
+  );
+};
+
 /**
  * Audio Synthesizer for Earthquake Alert Sirens (Web Audio API)
+ *
+ * Each alarm level is given a distinct, instantly recognizable character so a
+ * responder can judge severity by ear without looking at the screen:
+ *   CRITICAL (RED)     -> wailing three-sweep klaxon (loudest, most urgent)
+ *   WARNING  (YELLOW)  -> rapid triple beep (alerting but shorter)
+ *   ADVISORY / NORMAL  -> gentle rising two-note chime (informational)
  */
 export const playAudioAlarm = (alertLevel: AlertLevelType = 'CRITICAL') => {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return;
-    const ctx = new AudioContextClass();
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+
+    const master = ctx.createGain();
+    master.connect(ctx.destination);
+
+    const start = ctx.currentTime;
 
     if (alertLevel === 'CRITICAL') {
-      // Loud Dual Siren Beep for Red Alert
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
+      // Wailing klaxon: three rising sweeps with a harsh detuned edge.
+      master.gain.value = 0.45;
+      const sweeps = 3;
+      const sweepDuration = 0.45;
 
-      osc1.type = 'sawtooth';
-      osc2.type = 'sine';
+      for (let i = 0; i < sweeps; i++) {
+        const t0 = start + i * sweepDuration;
+        const osc = ctx.createOscillator();
+        const edge = ctx.createOscillator();
+        const env = ctx.createGain();
 
-      osc1.frequency.setValueAtTime(880, ctx.currentTime); // A5
-      osc1.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.4);
+        osc.type = 'sawtooth';
+        edge.type = 'square';
 
-      osc2.frequency.setValueAtTime(950, ctx.currentTime);
-      osc2.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.4);
+        osc.frequency.setValueAtTime(700, t0);
+        osc.frequency.exponentialRampToValueAtTime(1200, t0 + sweepDuration * 0.6);
+        osc.frequency.exponentialRampToValueAtTime(700, t0 + sweepDuration);
 
-      gain.gain.setValueAtTime(0.4, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.8);
+        edge.frequency.setValueAtTime(712, t0);
+        edge.frequency.exponentialRampToValueAtTime(1215, t0 + sweepDuration * 0.6);
+        edge.frequency.exponentialRampToValueAtTime(712, t0 + sweepDuration);
 
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(ctx.destination);
+        // Punchy envelope per sweep so each wail is clearly articulated.
+        env.gain.setValueAtTime(0.0001, t0);
+        env.gain.exponentialRampToValueAtTime(1, t0 + 0.03);
+        env.gain.setValueAtTime(1, t0 + sweepDuration * 0.8);
+        env.gain.exponentialRampToValueAtTime(0.0001, t0 + sweepDuration);
 
-      osc1.start();
-      osc2.start();
-      osc1.stop(ctx.currentTime + 0.8);
-      osc2.stop(ctx.currentTime + 0.8);
+        osc.connect(env);
+        edge.connect(env);
+        env.connect(master);
+
+        osc.start(t0);
+        edge.start(t0);
+        osc.stop(t0 + sweepDuration);
+        edge.stop(t0 + sweepDuration);
+      }
+
     } else if (alertLevel === 'WARNING') {
-      // Double Beep for Yellow Alert
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(660, ctx.currentTime);
-      gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      // Rapid triple beep: short and urgent, but clearly softer than CRITICAL.
+      master.gain.value = 0.35;
+      const beeps = 3;
+      const beepOn = 0.12;
+      const beepGap = 0.1;
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.4);
+      for (let i = 0; i < beeps; i++) {
+        const t0 = start + i * (beepOn + beepGap);
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(660, t0);
+
+        env.gain.setValueAtTime(0.0001, t0);
+        env.gain.exponentialRampToValueAtTime(1, t0 + 0.01);
+        env.gain.setValueAtTime(1, t0 + beepOn * 0.7);
+        env.gain.exponentialRampToValueAtTime(0.0001, t0 + beepOn);
+
+        osc.connect(env);
+        env.connect(master);
+
+        osc.start(t0);
+        osc.stop(t0 + beepOn);
+      }
+
     } else {
-      // Soft Chime for Green Alert / Advisory
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+      // Gentle rising two-note chime for Green Alert / Advisory / Normal.
+      master.gain.value = 0.2;
+      const notes = [523.25, 783.99]; // C5 -> G5
+      const noteLength = 0.4;
 
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
+      notes.forEach((freq, i) => {
+        const t0 = start + i * 0.18;
+        const osc = ctx.createOscillator();
+        const env = ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, t0);
+
+        env.gain.setValueAtTime(0.0001, t0);
+        env.gain.exponentialRampToValueAtTime(1, t0 + 0.02);
+        env.gain.exponentialRampToValueAtTime(0.0001, t0 + noteLength);
+
+        osc.connect(env);
+        env.connect(master);
+
+        osc.start(t0);
+        osc.stop(t0 + noteLength);
+      });
     }
   } catch (err) {
     console.warn('Audio synth context error:', err);
   }
+};
+
+/**
+ * Alert ids whose siren has already been played this session.
+ *
+ * A single broadcast can be observed by more than one path on the receiver —
+ * the real-time Firestore listener, the FCM foreground handler, and the alert
+ * banner. Deduping by alert id guarantees the receiver hears the siren exactly
+ * once, and lets the banner act as a reliable fallback trigger.
+ */
+const playedAlertIds = new Set<string>();
+
+export const playAlarmForAlert = (alertId: string | undefined, alertLevel: AlertLevelType) => {
+  if (!alertId) {
+    playAudioAlarm(alertLevel);
+    return;
+  }
+  if (playedAlertIds.has(alertId)) return;
+  playedAlertIds.add(alertId);
+  playAudioAlarm(alertLevel);
 };
 
 /**
@@ -441,11 +568,13 @@ export const sendPushNotification = async (
   title: string,
   body: string,
   alertLevel: AlertLevelType = 'CRITICAL',
-  skipSound: boolean = false
+  skipSound: boolean = false,
+  /** When known, the siren plays once per alert id instead of per call. */
+  alertId?: string
 ) => {
-  // Always trigger audio siren synth
+  // Always trigger audio siren synth (deduped per alert id when we have one)
   if (!skipSound) {
-    playAudioAlarm(alertLevel);
+    playAlarmForAlert(alertId, alertLevel);
   }
 
   // Always trigger device vibration on mobile
